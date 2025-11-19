@@ -947,21 +947,22 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 			var ty Type
 			var name string
 			iterateChilden(child, func(spreadChild *tree_sitter.Node) {
-				// ignored
 				switch spreadChild.Kind() {
+				case "variable_declarator":
+					nameNode := spreadChild.ChildByFieldName("name")
+					if nameNode == nil {
+						Fatal(spreadChild.ToSexp(), errors.New("spread child missing name field"))
+					}
+					name = nameNode.Utf8Text(ctx.javaSource)
 				case "...":
 					return
+				default:
+					goTy, ok := tryParseType(ctx, spreadChild)
+					ty = goTy
+					if ok {
+						return
+					}
 				}
-				goTy, ok := tryParseType(ctx, spreadChild)
-				ty = goTy
-				if ok {
-					return
-				}
-				nameNode := spreadChild.ChildByFieldName("name")
-				if nameNode == nil {
-					Fatal(spreadChild.ToSexp(), errors.New("spread child missing name field"))
-				}
-				name = nameNode.Utf8Text(ctx.javaSource)
 			})
 			params = append(params, Param{
 				name: name,
