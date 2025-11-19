@@ -13,6 +13,7 @@ import (
 )
 
 const SELF_REF = "this"
+const PACKAGE_NAME = "converted"
 
 type MigrationContext struct {
 	source     GoSource
@@ -29,6 +30,9 @@ type GoSource struct {
 
 func (s *GoSource) ToSource() string {
 	sb := strings.Builder{}
+	sb.WriteString("package ")
+	sb.WriteString(PACKAGE_NAME)
+	sb.WriteString("\n\n")
 	if len(s.imports) > 0 {
 		sb.WriteString("import (\n")
 		for _, imp := range s.imports {
@@ -204,6 +208,10 @@ func (t *Type) ToSource() string {
 	return string(*t)
 }
 
+func (t *Type) isArray() bool {
+	return strings.HasPrefix(string(*t), "[]")
+}
+
 type Statement interface {
 	SourceElement
 }
@@ -364,7 +372,7 @@ func (e *VarRef) ToSource() string {
 	return e.ref
 }
 
-type StringLiteral struct {
+type CharLiteral struct {
 	value string
 }
 
@@ -384,8 +392,8 @@ func (e *BooleanLiteral) ToSource() string {
 	return fmt.Sprintf("%t", e.value)
 }
 
-func (e *StringLiteral) ToSource() string {
-	return fmt.Sprintf("\"%s\"", e.value)
+func (e *CharLiteral) ToSource() string {
+	return fmt.Sprintf("%s", e.value)
 }
 
 type BinaryExpression struct {
@@ -694,10 +702,12 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 		var initialStmts []Statement
 		var value Expression
 		iterateChilden(stmtNode, func(child *tree_sitter.Node) {
-			if child.Kind() == ";" {
-				return
+			switch child.Kind() {
+			case ";":
+			case "return":
+			default:
+				value, initialStmts = convertExpression(ctx, child)
 			}
-			value, initialStmts = convertExpression(ctx, child)
 		})
 		return append(initialStmts, &ReturnStatement{value: value})
 	case "if_statement":
@@ -795,6 +805,15 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 			ref: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "object_creation_expression":
+		ty, isType := tryParseType(ctx, expression.ChildByFieldName("type"))
+		if !isType {
+			Fatal(expression.ToSexp(), errors.New("unable to parse type in object_creation_expression"))
+		}
+		if ty.isArray() {
+			return &GoStatement{
+				source: fmt.Sprintf("make(%s, 0)", ty),
+			}, nil
+		}
 		// TODO: properly initialize objects here
 		return &NIL, nil
 	case "field_access":
@@ -841,7 +860,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 			right:    rigth,
 		}, stms
 	case "character_literal":
-		return &StringLiteral{
+		return &CharLiteral{
 			value: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "true":
@@ -1007,11 +1026,11 @@ func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) vari
 	}
 	valueNode := declNode.ChildByFieldName("value")
 	if valueNode != nil {
+		value, init := convertExpression(ctx, valueNode)
+		Assert("unexpected statements in variable declaration", len(init) == 0)
 		return variableDeclResult{
-			name: name,
-			value: &UnhandledExpression{
-				text: valueNode.Utf8Text(ctx.javaSource),
-			},
+			name:  name,
+			value: value,
 		}
 	}
 	return variableDeclResult{
@@ -1048,12 +1067,16 @@ func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (Type, bool) {
 			fallthrough
 		case "Collection":
 			fallthrough
+		case "ArrayList":
+			fallthrough
 		case "List":
 			Assert("List can have only one type param", len(typeParams) < 2)
 			if len(typeParams) == 0 {
 				return Type("[]interface{}"), true
 			}
 			return Type("[]" + typeParams[0]), true
+		default:
+			Fatal(node.ToSexp(), errors.New("unhandled generic type : "+typeName))
 		}
 	}
 
