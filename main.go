@@ -18,10 +18,10 @@ type MigrationContext struct {
 }
 
 type GoSource struct {
-	imports   []GoImport
-	structs   []GoStruct
-	functions []GoFunction
-	methods   []GoMethod
+	imports   []Import
+	structs   []Struct
+	functions []Function
+	methods   []Method
 }
 
 func (s *GoSource) ToSource() string {
@@ -50,21 +50,21 @@ func (s *GoSource) ToSource() string {
 	return sb.String()
 }
 
-type GoImport struct {
+type Import struct {
 	packagePath string
 	alias       *string
 }
 
-func (imp *GoImport) ToSource() string {
+func (imp *Import) ToSource() string {
 	if imp.alias != nil {
 		return fmt.Sprintf("%s \"%s\"", *imp.alias, imp.packagePath)
 	}
 	return fmt.Sprintf("\"%s\"", imp.packagePath)
 }
 
-type GoStruct struct {
+type Struct struct {
 	name     string
-	fields   []GoStructField
+	fields   []StructField
 	public   bool
 	comments []string
 }
@@ -77,7 +77,7 @@ func addComments(sb *strings.Builder, comments []string) {
 	}
 }
 
-func (s *GoStruct) ToSource() string {
+func (s *Struct) ToSource() string {
 	sb := strings.Builder{}
 	addComments(&sb, s.comments)
 	sb.WriteString("type ")
@@ -92,39 +92,39 @@ func (s *GoStruct) ToSource() string {
 	return sb.String()
 }
 
-type GoFunction struct {
+type Function struct {
 	name       string
-	params     []GoParam
-	returnType *GoType
-	body       []GoStatement
+	params     []Param
+	returnType *Type
+	body       []Statement
 	comments   []string
 	public     bool
 }
 
-type GoMethod struct {
-	GoFunction
-	receiver GoParam
+type Method struct {
+	Function
+	receiver Param
 }
 
 // TODO: this is basically same as GoFunction.ToSource, refactor
-func (f *GoMethod) ToSource() string {
+func (f *Method) ToSource() string {
 	sb := strings.Builder{}
 	sb.WriteString("func ")
 	sb.WriteString("(")
 	sb.WriteString(f.receiver.ToSource())
 	sb.WriteString(") ")
 	sb.WriteString(toIdentifier(f.name, f.public))
-	return finishGoFunctionToSource(&sb, &f.GoFunction)
+	return finishGoFunctionToSource(&sb, &f.Function)
 }
 
-func (f *GoFunction) ToSource() string {
+func (f *Function) ToSource() string {
 	sb := strings.Builder{}
 	sb.WriteString("func ")
 	sb.WriteString(toIdentifier(f.name, f.public))
 	return finishGoFunctionToSource(&sb, f)
 }
 
-func finishGoFunctionToSource(sb *strings.Builder, f *GoFunction) string {
+func finishGoFunctionToSource(sb *strings.Builder, f *Function) string {
 	sb.WriteString("(")
 	for i, param := range f.params {
 		if i > 0 {
@@ -147,23 +147,23 @@ func finishGoFunctionToSource(sb *strings.Builder, f *GoFunction) string {
 	return sb.String()
 }
 
-type GoParam struct {
+type Param struct {
 	name string
-	ty   GoType
+	ty   Type
 }
 
-func (p *GoParam) ToSource() string {
+func (p *Param) ToSource() string {
 	return fmt.Sprintf("%s %s", p.name, p.ty.ToSource())
 }
 
-type GoStructField struct {
+type StructField struct {
 	name     string
-	ty       GoType
+	ty       Type
 	public   bool
 	comments []string
 }
 
-func (f *GoStructField) ToSource() string {
+func (f *StructField) ToSource() string {
 	sb := strings.Builder{}
 	addComments(&sb, f.comments)
 	sb.WriteString(fmt.Sprintf("%s %s", toIdentifier(f.name, f.public), f.ty.ToSource()))
@@ -188,42 +188,42 @@ func capitalizeFirstLetter(name string) string {
 	return string(first) + name[1:]
 }
 
-type GoType string
+type Type string
 
 const (
-	GoTypeInt     GoType = "int"
-	GoTypeString  GoType = "string"
-	GoTypeBool    GoType = "bool"
-	GoTypeFloat64 GoType = "float64"
+	TypeInt     Type = "int"
+	TypeString  Type = "string"
+	TypeBool    Type = "bool"
+	TypeFloat64 Type = "float64"
 )
 
-func (t *GoType) ToSource() string {
+func (t *Type) ToSource() string {
 	return string(*t)
 }
 
-type GoStatement interface {
+type Statement interface {
 	SourceElement
 }
 
-type GoIfStatement struct {
-	condition GoExpression
-	body      []GoStatement
+type IfStatement struct {
+	condition Expression
+	body      []Statement
 }
 
-type GoVarDeclaration struct {
+type VarDeclaration struct {
 	name  string
-	ty    GoType
-	value GoExpression
+	ty    Type
+	value Expression
 }
 
-func (s *GoVarDeclaration) ToSource() string {
+func (s *VarDeclaration) ToSource() string {
 	if s.value != nil {
 		return fmt.Sprintf("%s := %s", s.name, s.value.ToSource())
 	}
 	return fmt.Sprintf("var %s %s", s.name, s.ty.ToSource())
 }
 
-func (s *GoIfStatement) ToSource() string {
+func (s *IfStatement) ToSource() string {
 	sb := strings.Builder{}
 	sb.WriteString("if ")
 	sb.WriteString(s.condition.ToSource())
@@ -236,35 +236,35 @@ func (s *GoIfStatement) ToSource() string {
 	return sb.String()
 }
 
-type GoReturnStatement struct {
-	value GoExpression
+type ReturnStatement struct {
+	value Expression
 }
 
-func (s *GoReturnStatement) ToSource() string {
+func (s *ReturnStatement) ToSource() string {
 	if s.value == nil {
 		return "return"
 	}
 	return fmt.Sprintf("return %s", s.value.ToSource())
 }
 
-type GoCommentStmt struct {
+type CommentStmt struct {
 	comments []string
 }
 
-func (s *GoCommentStmt) ToSource() string {
+func (s *CommentStmt) ToSource() string {
 	sb := strings.Builder{}
 	addComments(&sb, s.comments)
 	return sb.String()
 }
 
-type GoForStatement struct {
-	init      GoStatement
-	condition GoExpression
-	post      GoStatement
-	body      []GoStatement
+type ForStatement struct {
+	init      Statement
+	condition Expression
+	post      Statement
+	body      []Statement
 }
 
-func (s *GoForStatement) ToSource() string {
+func (s *ForStatement) ToSource() string {
 	sb := strings.Builder{}
 	sb.WriteString("for ")
 	if s.init != nil {
@@ -292,44 +292,44 @@ func (s *GoForStatement) ToSource() string {
 	return sb.String()
 }
 
-type GoCallStatement struct {
-	exp GoExpression
+type CallStatement struct {
+	exp Expression
 }
 
-type GoAssignStatement struct {
-	ref   GoVarRef
-	value GoExpression
+type AssignStatement struct {
+	ref   VarRef
+	value Expression
 }
 
-func (s *GoAssignStatement) ToSource() string {
+func (s *AssignStatement) ToSource() string {
 	return fmt.Sprintf("%s = %s", s.ref.ToSource(), s.value.ToSource())
 }
 
-func (s *GoCallStatement) ToSource() string {
+func (s *CallStatement) ToSource() string {
 	return s.exp.ToSource()
 }
 
-type GoExpression interface {
+type Expression interface {
 	SourceElement
 }
 
-type GoReturnExpression struct {
-	value GoExpression
+type ReturnExpression struct {
+	value Expression
 }
 
-func (e *GoReturnExpression) ToSource() string {
+func (e *ReturnExpression) ToSource() string {
 	if e.value == nil {
 		return "return"
 	}
 	return fmt.Sprintf("return %s", e.value.ToSource())
 }
 
-type GoCallExpression struct {
+type CallExpression struct {
 	function string
-	args     []GoExpression
+	args     []Expression
 }
 
-func (e *GoCallExpression) ToSource() string {
+func (e *CallExpression) ToSource() string {
 	sb := strings.Builder{}
 	sb.WriteString(e.function)
 	sb.WriteString("(")
@@ -343,13 +343,13 @@ func (e *GoCallExpression) ToSource() string {
 	return sb.String()
 }
 
-type GoVarRef struct {
+type VarRef struct {
 	ref string
 }
 
-var GoNil = GoVarRef{ref: "nil"}
+var NIL = VarRef{ref: "nil"}
 
-func (e *GoVarRef) ToSource() string {
+func (e *VarRef) ToSource() string {
 	return e.ref
 }
 
@@ -378,14 +378,14 @@ func (e *StringLiteral) ToSource() string {
 }
 
 type BinaryExpression struct {
-	left     GoExpression
+	left     Expression
 	operator string
-	right    GoExpression
+	right    Expression
 }
 
 type UnaryExpression struct {
 	operator string
-	operand  GoExpression
+	operand  Expression
 }
 
 func (e *UnaryExpression) ToSource() string {
@@ -473,7 +473,7 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 			for _, method := range result.methods {
 				ctx.source.methods = append(ctx.source.methods, method)
 			}
-			ctx.source.structs = append(ctx.source.structs, GoStruct{
+			ctx.source.structs = append(ctx.source.structs, Struct{
 				name:     className,
 				fields:   result.fields,
 				comments: result.comments,
@@ -488,15 +488,15 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 }
 
 type classConversionResult struct {
-	fields    []GoStructField
+	fields    []StructField
 	comments  []string
-	functions []GoFunction
-	methods   []GoMethod
+	functions []Function
+	methods   []Method
 }
 
 func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_sitter.Node) classConversionResult {
 	var result classConversionResult
-	fieldInitValues := map[string]GoExpression{}
+	fieldInitValues := map[string]Expression{}
 	iterateChilden(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "field_declaration":
@@ -523,12 +523,12 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 }
 
 // TODO: this is very similar to constructor conversion, refactor
-func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Node) GoFunction {
+func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Node) Function {
 	var modifiers modifiers
-	var params []GoParam
-	var body []GoStatement
+	var params []Param
+	var body []Statement
 	var name string
-	var returnType *GoType
+	var returnType *Type
 	iterateChilden(methodNode, func(child *tree_sitter.Node) {
 		ty, isType := tryParseType(ctx, child)
 		if isType {
@@ -552,7 +552,7 @@ func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Nod
 			unhandledChild(ctx, child, "method_declaration")
 		}
 	})
-	return GoFunction{
+	return Function{
 		name:       name,
 		params:     params,
 		returnType: returnType,
@@ -561,8 +561,8 @@ func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Nod
 	}
 }
 
-func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) []GoStatement {
-	var body []GoStatement
+func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) []Statement {
+	var body []Statement
 	iterateChilden(blockNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		//ignored
@@ -575,10 +575,10 @@ func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) [
 	return body
 }
 
-func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]GoExpression, structName string, constructorNode *tree_sitter.Node) GoFunction {
+func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]Expression, structName string, constructorNode *tree_sitter.Node) Function {
 	var modifiers modifiers
-	var params []GoParam
-	var body []GoStatement
+	var params []Param
+	var body []Statement
 	iterateChilden(constructorNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
@@ -601,8 +601,8 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]GoExp
 		nameBuilder.WriteString(capitalizeFirstLetter(param.name))
 	}
 	name := nameBuilder.String()
-	retTy := GoType(structName)
-	return GoFunction{
+	retTy := Type(structName)
+	return Function{
 		name:       name,
 		params:     params,
 		returnType: &retTy,
@@ -611,13 +611,13 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]GoExp
 	}
 }
 
-func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]GoExpression, structName string, bodyNode *tree_sitter.Node) []GoStatement {
-	var body []GoStatement
+func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]Expression, structName string, bodyNode *tree_sitter.Node) []Statement {
+	var body []Statement
 	for fieldName, initExpr := range *fieldInitValues {
-		body = append(body, &GoAssignStatement{ref: GoVarRef{ref: fieldName}, value: initExpr})
+		body = append(body, &AssignStatement{ref: VarRef{ref: fieldName}, value: initExpr})
 	}
 	if len(*fieldInitValues) > 0 {
-		body = append(body, &GoCommentStmt{comments: []string{"Default field initializations"}})
+		body = append(body, &CommentStmt{comments: []string{"Default field initializations"}})
 	}
 	iterateChilden(bodyNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
@@ -635,30 +635,30 @@ func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]G
 	return body
 }
 
-func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []GoStatement {
+func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []Statement {
 	switch stmtNode.Kind() {
 	case "line_comment":
 		return nil
 	case "expression_statement":
-		var body []GoStatement
+		var body []Statement
 		iterateChilden(stmtNode, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case "assignment_expression":
 				refNode := child.ChildByFieldName("left")
-				ref := GoVarRef{ref: refNode.Utf8Text(ctx.javaSource)}
+				ref := VarRef{ref: refNode.Utf8Text(ctx.javaSource)}
 				valueNode := child.ChildByFieldName("right")
 				valueExp, initStmts := convertExpression(ctx, valueNode)
 				if len(initStmts) > 0 {
 					Fatal(valueNode.ToSexp(), errors.New("unexpected statements in assignment expression"))
 				}
-				body = append(body, &GoAssignStatement{
+				body = append(body, &AssignStatement{
 					ref:   ref,
 					value: valueExp,
 				})
 			case "method_invocation":
 				callExperession, initStmts := convertExpression(ctx, child)
 				body = append(body, initStmts...)
-				body = append(body, &GoCallStatement{exp: callExperession})
+				body = append(body, &CallStatement{exp: callExperession})
 			//ignored
 			case ";":
 			default:
@@ -667,21 +667,21 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []GoSta
 		})
 		return body
 	case "return_statement":
-		var initialStmts []GoStatement
-		var value GoExpression
+		var initialStmts []Statement
+		var value Expression
 		iterateChilden(stmtNode, func(child *tree_sitter.Node) {
 			if child.Kind() == ";" {
 				return
 			}
 			value, initialStmts = convertExpression(ctx, child)
 		})
-		return append(initialStmts, &GoReturnStatement{value: value})
+		return append(initialStmts, &ReturnStatement{value: value})
 	case "if_statement":
 		conditionNode := stmtNode.ChildByFieldName("condition")
 		conditionExp, stmts := convertExpression(ctx, conditionNode)
 		bodyNode := stmtNode.ChildByFieldName("consequence")
 		bodyStmts := convertStatementBlock(ctx, bodyNode)
-		return append(stmts, &GoIfStatement{
+		return append(stmts, &IfStatement{
 			condition: conditionExp,
 			body:      bodyStmts,
 		})
@@ -695,14 +695,14 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []GoSta
 		name := declNode.ChildByFieldName("name").Utf8Text(ctx.javaSource)
 		valueNode := declNode.ChildByFieldName("value")
 		if valueNode == nil {
-			return []GoStatement{
-				&GoVarDeclaration{
+			return []Statement{
+				&VarDeclaration{
 					name: name,
 					ty:   ty,
 				}}
 		}
 		valueExpr, initStmts := convertExpression(ctx, valueNode)
-		return append(initStmts, &GoVarDeclaration{
+		return append(initStmts, &VarDeclaration{
 			name:  name,
 			ty:    ty,
 			value: valueExpr,
@@ -712,7 +712,7 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []GoSta
 		conditionExp, initStmts := convertExpression(ctx, conditionNode)
 		bodyNode := stmtNode.ChildByFieldName("body")
 		bodyStmts := convertStatementBlock(ctx, bodyNode)
-		return append(initStmts, &GoForStatement{
+		return append(initStmts, &ForStatement{
 			condition: conditionExp,
 			body:      bodyStmts,
 		})
@@ -722,9 +722,9 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []GoSta
 	panic("unreachable")
 }
 
-func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode *tree_sitter.Node) []GoStatement {
+func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode *tree_sitter.Node) []Statement {
 	parentCall := "this"
-	var argExp []GoExpression
+	var argExp []Expression
 	iterateChilden(invocationNode, func(args *tree_sitter.Node) {
 		switch args.Kind() {
 		case "this":
@@ -737,16 +737,16 @@ func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode 
 			unhandledChild(ctx, args, "explicit_constructor_invocation")
 		}
 	})
-	return []GoStatement{
-		&GoCallStatement{
-			exp: &GoCallExpression{
+	return []Statement{
+		&CallStatement{
+			exp: &CallExpression{
 				function: parentCall,
 				args:     argExp,
 			}}}
 }
 
-func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []GoExpression {
-	var args []GoExpression
+func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []Expression {
+	var args []Expression
 	iterateChilden(argList, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		// ignored
@@ -764,17 +764,17 @@ func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []GoE
 	return args
 }
 
-func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (GoExpression, []GoStatement) {
+func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Expression, []Statement) {
 	switch expression.Kind() {
 	case "identifier":
-		return &GoVarRef{
+		return &VarRef{
 			ref: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "object_creation_expression":
 		// TODO: properly initialize objects here
-		return &GoNil, nil
+		return &NIL, nil
 	case "field_access":
-		return &GoVarRef{
+		return &VarRef{
 			ref: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "method_invocation":
@@ -782,17 +782,17 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (GoE
 		methodName := methodNameNode.Utf8Text(ctx.javaSource)
 		argListNode := expression.ChildByFieldName("arguments")
 		argExps := convertArgumentList(ctx, argListNode)
-		return &GoCallExpression{
+		return &CallExpression{
 			function: methodName,
 			args:     argExps,
 		}, nil
 	case "return":
-		var initStmts []GoStatement
-		var value GoExpression
+		var initStmts []Statement
+		var value Expression
 		if expression.ChildCount() == 1 {
 			value, initStmts = convertExpression(ctx, expression.Child(0))
 		}
-		return &GoReturnExpression{
+		return &ReturnExpression{
 			value: value,
 		}, initStmts
 	case "parenthesized_expression":
@@ -866,8 +866,8 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (GoE
 	panic("unreachable")
 }
 
-func convertParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []GoParam {
-	var params []GoParam
+func convertParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []Param {
+	var params []Param
 	iterateChilden(paramsNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "formal_parameters":
@@ -879,8 +879,8 @@ func convertParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []Go
 	return params
 }
 
-func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []GoParam {
-	var params []GoParam
+func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []Param {
+	var params []Param
 	iterateChilden(paramsNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "formal_parameter":
@@ -896,12 +896,12 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 			if !ok {
 				Fatal(typeNode.ToSexp(), errors.New("unable to parse type in formal_parameter"))
 			}
-			params = append(params, GoParam{
+			params = append(params, Param{
 				name: nameNode.Utf8Text(ctx.javaSource),
 				ty:   ty,
 			})
 		case "spread_parameter":
-			var ty GoType
+			var ty Type
 			var name string
 			iterateChilden(child, func(spreadChild *tree_sitter.Node) {
 				// ignored
@@ -920,7 +920,7 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 				}
 				name = nameNode.Utf8Text(ctx.javaSource)
 			})
-			params = append(params, GoParam{
+			params = append(params, Param{
 				name: name,
 				ty:   "..." + ty,
 			})
@@ -935,12 +935,12 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 	return params
 }
 
-func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node) (GoStructField, GoExpression) {
+func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node) (StructField, Expression) {
 	var modifiers modifiers
-	var ty GoType
+	var ty Type
 	var name string
 	var comments []string
-	var initExpr GoExpression
+	var initExpr Expression
 	iterateChilden(fieldNode, func(child *tree_sitter.Node) {
 		t, ok := tryParseType(ctx, child)
 		if ok {
@@ -960,7 +960,7 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 			unhandledChild(ctx, child, "field_declaration")
 		}
 	})
-	return GoStructField{
+	return StructField{
 		name:     name,
 		ty:       ty,
 		public:   modifiers&PUBLIC != 0,
@@ -970,7 +970,7 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 
 type variableDeclResult struct {
 	name  string
-	value GoExpression
+	value Expression
 }
 
 func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) variableDeclResult {
@@ -995,14 +995,14 @@ func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) vari
 	}
 }
 
-func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (GoType, bool) {
+func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (Type, bool) {
 	switch node.Kind() {
 	case "type_identifier":
-		return GoType(node.Utf8Text(ctx.javaSource)), true
+		return Type(node.Utf8Text(ctx.javaSource)), true
 	case "integral_type":
-		return GoTypeInt, true
+		return TypeInt, true
 	case "boolean_type":
-		return GoTypeBool, true
+		return TypeBool, true
 	case "generic_type":
 		var typeName string
 		var typeParams []string
@@ -1027,9 +1027,9 @@ func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (GoType, bool) 
 		case "List":
 			Assert("List can have only one type param", len(typeParams) < 2)
 			if len(typeParams) == 0 {
-				return GoType("[]interface{}"), true
+				return Type("[]interface{}"), true
 			}
-			return GoType("[]" + typeParams[0]), true
+			return Type("[]" + typeParams[0]), true
 		}
 	}
 
