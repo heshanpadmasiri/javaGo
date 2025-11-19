@@ -12,11 +12,14 @@ import (
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 )
 
+const SELF_REF = "this"
+
 type MigrationContext struct {
 	source     GoSource
 	javaSource []byte
 }
 
+// TODO: add constants and vars
 type GoSource struct {
 	imports   []Import
 	structs   []Struct
@@ -203,6 +206,14 @@ func (t *Type) ToSource() string {
 
 type Statement interface {
 	SourceElement
+}
+
+type GoStatement struct {
+	source string
+}
+
+func (s *GoStatement) ToSource() string {
+	return s.source
 }
 
 type IfStatement struct {
@@ -500,6 +511,7 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 	iterateChilden(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "field_declaration":
+			// TODO: if the field is static make it a var
 			field, initExpr := convertFieldDeclaration(ctx, child)
 			if initExpr != nil {
 				Assert("mutiple initializations for field"+field.name, fieldInitValues[field.name] == nil)
@@ -510,7 +522,18 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 			constructor := convertConstructor(ctx, &fieldInitValues, structName, child)
 			result.functions = append(result.functions, constructor)
 		case "method_declaration":
-			result.functions = append(result.functions, convertMethodDeclaration(ctx, child))
+			function, isStatic := convertMethodDeclaration(ctx, child)
+			if isStatic {
+				result.functions = append(result.functions, function)
+			} else {
+				result.methods = append(result.methods, Method{
+					Function: function,
+					receiver: Param{
+						name: SELF_REF,
+						ty:   Type("*" + structName),
+					},
+				})
+			}
 		// ignored
 		case "{":
 		case "}":
@@ -523,7 +546,7 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 }
 
 // TODO: this is very similar to constructor conversion, refactor
-func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Node) Function {
+func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Node) (Function, bool) {
 	var modifiers modifiers
 	var params []Param
 	var body []Statement
@@ -558,7 +581,7 @@ func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Nod
 		returnType: returnType,
 		body:       body,
 		public:     modifiers&PUBLIC != 0,
-	}
+	}, modifiers&STATIC != 0
 }
 
 func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) []Statement {
@@ -579,6 +602,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]Expre
 	var modifiers modifiers
 	var params []Param
 	var body []Statement
+	body = append(body, &GoStatement{source: fmt.Sprintf("%s := %s{};", SELF_REF, structName)})
 	iterateChilden(constructorNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
@@ -614,7 +638,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]Expre
 func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]Expression, structName string, bodyNode *tree_sitter.Node) []Statement {
 	var body []Statement
 	for fieldName, initExpr := range *fieldInitValues {
-		body = append(body, &AssignStatement{ref: VarRef{ref: fieldName}, value: initExpr})
+		body = append(body, &AssignStatement{ref: VarRef{ref: SELF_REF + "." + fieldName}, value: initExpr})
 	}
 	if len(*fieldInitValues) > 0 {
 		body = append(body, &CommentStmt{comments: []string{"Default field initializations"}})
@@ -783,7 +807,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		argListNode := expression.ChildByFieldName("arguments")
 		argExps := convertArgumentList(ctx, argListNode)
 		return &CallExpression{
-			function: methodName,
+			function: SELF_REF + "." + methodName,
 			args:     argExps,
 		}, nil
 	case "return":
