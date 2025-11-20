@@ -332,6 +332,15 @@ type Expression interface {
 	SourceElement
 }
 
+type CastExpression struct {
+	ty    Type
+	value Expression
+}
+
+func (e *CastExpression) ToSource() string {
+	return fmt.Sprintf("%s(%s)", e.ty.ToSource(), e.value.ToSource())
+}
+
 type ReturnExpression struct {
 	value Expression
 }
@@ -518,6 +527,8 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 	fieldInitValues := map[string]Expression{}
 	iterateChilden(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
+		case "class_declaration":
+			migrateClassDeclaration(ctx, child)
 		case "field_declaration":
 			// TODO: if the field is static make it a var
 			field, initExpr := convertFieldDeclaration(ctx, child)
@@ -618,13 +629,14 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]Expre
 		case "formal_parameters":
 			params = convertFormalParameters(ctx, child)
 		case "constructor_body":
-			body = convertConstructorBody(ctx, fieldInitValues, structName, child)
+			body = append(body, convertConstructorBody(ctx, fieldInitValues, structName, child)...)
 		// ignored
 		case "identifier":
 		default:
 			unhandledChild(ctx, child, "constructor_declaration")
 		}
 	})
+	body = append(body, &ReturnStatement{value: &VarRef{ref: SELF_REF}})
 	nameBuilder := strings.Builder{}
 	nameBuilder.WriteString(toIdentifier("new", modifiers.isPublic()))
 	nameBuilder.WriteString(capitalizeFirstLetter(structName))
@@ -750,6 +762,12 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 			condition: conditionExp,
 			body:      bodyStmts,
 		})
+	case "throw_statement":
+		valueNode := stmtNode.Child(1)
+		valueExp, initStmts := convertExpression(ctx, valueNode)
+		return append(initStmts, &ReturnStatement{
+			value: valueExp,
+		})
 	default:
 		unhandledChild(ctx, stmtNode, "statement")
 	}
@@ -821,7 +839,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 			ref: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "method_invocation":
-		methodNameNode := expression.ChildByFieldName("name")
+		methodNameNode := expression.ChildByFieldName("object")
 		methodName := methodNameNode.Utf8Text(ctx.javaSource)
 		argListNode := expression.ChildByFieldName("arguments")
 		argExps := convertArgumentList(ctx, argListNode)
@@ -863,6 +881,8 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		return &CharLiteral{
 			value: expression.Utf8Text(ctx.javaSource),
 		}, nil
+	case "null_literal":
+		return &NIL, nil
 	case "true":
 		return &BooleanLiteral{
 			value: true,
@@ -901,6 +921,18 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		return &UnaryExpression{
 			operator: operator,
 			operand:  operand,
+		}, initStmts
+	case "cast_expression":
+		typeNode := expression.ChildByFieldName("type")
+		ty, ok := tryParseType(ctx, typeNode)
+		if !ok {
+			Fatal(typeNode.ToSexp(), errors.New("unable to parse type in cast_expression"))
+		}
+		valueNode := expression.ChildByFieldName("value")
+		valueExp, initStmts := convertExpression(ctx, valueNode)
+		return &CastExpression{
+			ty:    ty,
+			value: valueExp,
 		}, initStmts
 	default:
 		fmt.Println(expression.Utf8Text(ctx.javaSource))
@@ -1042,11 +1074,36 @@ func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) vari
 func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (Type, bool) {
 	switch node.Kind() {
 	case "type_identifier":
-		return Type(node.Utf8Text(ctx.javaSource)), true
+		var goType string
+		typeName := node.Utf8Text(ctx.javaSource)
+		if strings.HasPrefix(typeName, "Abstract") {
+			goType = typeName[len("Abstract"):]
+			return Type(goType), true
+		}
+		if strings.HasPrefix(typeName, "ST") {
+			goType = "internal." + typeName
+			return Type(goType), true
+		}
+		switch typeName {
+		case "Object":
+			goType = "interface{}"
+		case "DiagnosticCode":
+			goType = "diagnostics.DiagnosticCode"
+		default:
+			goType = typeName
+		}
+		return Type(goType), true
 	case "integral_type":
 		return TypeInt, true
 	case "boolean_type":
 		return TypeBool, true
+	case "array_type":
+		typeNode := node.ChildByFieldName("element")
+		ty, ok := tryParseType(ctx, typeNode)
+		if !ok {
+			Fatal(typeNode.ToSexp(), errors.New("unable to parse element type in array_type"))
+		}
+		return Type("[]" + ty), true
 	case "generic_type":
 		var typeName string
 		var typeParams []string
@@ -1065,6 +1122,8 @@ func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (Type, bool) {
 		switch typeName {
 		// Array types
 		case "ArrayDeque":
+			fallthrough
+		case "Deque":
 			fallthrough
 		case "Collection":
 			fallthrough
