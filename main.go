@@ -332,6 +332,14 @@ type Expression interface {
 	SourceElement
 }
 
+type GoExpression struct {
+	source string
+}
+
+func (e *GoExpression) ToSource() string {
+	return e.source
+}
+
 type CastExpression struct {
 	ty    Type
 	value Expression
@@ -727,10 +735,16 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 		conditionExp, stmts := convertExpression(ctx, conditionNode)
 		bodyNode := stmtNode.ChildByFieldName("consequence")
 		bodyStmts := convertStatementBlock(ctx, bodyNode)
-		return append(stmts, &IfStatement{
+		stmts = append(stmts, &IfStatement{
 			condition: conditionExp,
 			body:      bodyStmts,
 		})
+		cursor := stmtNode.Walk()
+		elseIf := stmtNode.ChildrenByFieldName("alternative", cursor)
+		for _, elseIfNode := range elseIf {
+			stmts = append(stmts, convertStatement(ctx, &elseIfNode)...)
+		}
+		return stmts
 	case "local_variable_declaration":
 		typeNode := stmtNode.ChildByFieldName("type")
 		ty, ok := tryParseType(ctx, typeNode)
@@ -764,10 +778,22 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 		})
 	case "throw_statement":
 		valueNode := stmtNode.Child(1)
-		valueExp, initStmts := convertExpression(ctx, valueNode)
-		return append(initStmts, &ReturnStatement{
-			value: valueExp,
-		})
+		exception := valueNode.ChildByFieldName("type").Utf8Text(ctx.javaSource)
+		arguments := valueNode.ChildByFieldName("arguments").Utf8Text(ctx.javaSource)
+		switch exception {
+		case "IllegalArgumentException":
+			return []Statement{
+				&GoStatement{
+					source: fmt.Sprintf("panic(%s)", arguments),
+				},
+			}
+		default:
+			return []Statement{
+				&GoStatement{
+					source: stmtNode.Utf8Text(ctx.javaSource),
+				},
+			}
+		}
 	default:
 		unhandledChild(ctx, stmtNode, "statement")
 	}
@@ -839,14 +865,18 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 			ref: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "method_invocation":
-		methodNameNode := expression.ChildByFieldName("object")
-		methodName := methodNameNode.Utf8Text(ctx.javaSource)
-		argListNode := expression.ChildByFieldName("arguments")
-		argExps := convertArgumentList(ctx, argListNode)
-		return &CallExpression{
-			function: SELF_REF + "." + methodName,
-			args:     argExps,
+		name := expression.ChildByFieldName("name").Utf8Text(ctx.javaSource)
+		switch name {
+		case "size":
+			object := expression.ChildByFieldName("object").Utf8Text(ctx.javaSource)
+			return &GoExpression{
+				source: fmt.Sprintf("len(%s)", object),
+			}, nil
+		default:
+		return &GoExpression{
+			source: expression.Utf8Text(ctx.javaSource),
 		}, nil
+		}
 	case "return":
 		var initStmts []Statement
 		var value Expression
