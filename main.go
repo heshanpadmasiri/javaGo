@@ -71,6 +71,7 @@ func (imp *Import) ToSource() string {
 
 type Struct struct {
 	name     string
+	includes []Type
 	fields   []StructField
 	public   bool
 	comments []string
@@ -90,6 +91,11 @@ func (s *Struct) ToSource() string {
 	sb.WriteString("type ")
 	sb.WriteString(toIdentifier(s.name, s.public))
 	sb.WriteString(" struct {\n")
+	for _, include := range s.includes {
+		sb.WriteString("    ")
+		sb.WriteString(include.ToSource())
+		sb.WriteString("\n")
+	}
 	for _, field := range s.fields {
 		sb.WriteString("    ")
 		sb.WriteString(field.ToSource())
@@ -216,6 +222,54 @@ type Statement interface {
 	SourceElement
 }
 
+type SwitchStatement struct {
+	condition   Expression
+	cases       []SwitchCase
+	defaultBody []Statement
+}
+
+type SwitchCase struct {
+	condition Expression
+	body      []Statement
+}
+
+func (s *SwitchStatement) ToSource() string {
+	sb := strings.Builder{}
+	sb.WriteString("switch ")
+	sb.WriteString(s.condition.ToSource())
+	sb.WriteString(" {\n")
+	for _, cs := range s.cases {
+		conditionStr := cs.condition.ToSource()
+		if (conditionStr == "default") {
+			sb.WriteString("default:\n")
+			for _, stmt := range cs.body {
+				sb.WriteString(stmt.ToSource())
+				sb.WriteString("\n")
+			}
+		} else {
+			sb.WriteString("case ")
+			if strings.HasPrefix(conditionStr, "case ") {
+				conditionStr = strings.TrimPrefix(conditionStr, "case ")
+			}
+			sb.WriteString(conditionStr)
+			sb.WriteString(":\n")
+			for _, stmt := range cs.body {
+				sb.WriteString(stmt.ToSource())
+				sb.WriteString("\n")
+			}
+		}
+	}
+	if len(s.defaultBody) > 0 {
+		sb.WriteString("default:\n")
+		for _, stmt := range s.defaultBody {
+			sb.WriteString(stmt.ToSource())
+			sb.WriteString("\n")
+		}
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
 type GoStatement struct {
 	source string
 }
@@ -227,6 +281,8 @@ func (s *GoStatement) ToSource() string {
 type IfStatement struct {
 	condition Expression
 	body      []Statement
+	elseIf    []IfStatement
+	elseStmts []Statement
 }
 
 type VarDeclaration struct {
@@ -252,6 +308,24 @@ func (s *IfStatement) ToSource() string {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("}")
+	for _, elseIf := range s.elseIf {
+		sb.WriteString("else if ")
+		sb.WriteString(elseIf.condition.ToSource())
+		sb.WriteString(" {\n")
+		for _, stmt := range elseIf.body {
+			sb.WriteString(stmt.ToSource())
+			sb.WriteString("\n")
+		}
+		sb.WriteString("}")
+	}
+	if len(s.elseStmts) > 0 {
+		sb.WriteString("else {\n")
+		for _, stmt := range s.elseStmts {
+			sb.WriteString(stmt.ToSource())
+			sb.WriteString("\n")
+		}
+		sb.WriteString("}")
+	}
 	return sb.String()
 }
 
@@ -273,6 +347,38 @@ type CommentStmt struct {
 func (s *CommentStmt) ToSource() string {
 	sb := strings.Builder{}
 	addComments(&sb, s.comments)
+	return sb.String()
+}
+
+type RangeForStatement struct {
+	indexVar       string
+	valueVar       string
+	collectionExpr Expression
+	body           []Statement
+}
+
+func (s *RangeForStatement) ToSource() string {
+	sb := strings.Builder{}
+	sb.WriteString("for ")
+	if s.indexVar != "" {
+		sb.WriteString(s.indexVar)
+	} else {
+		sb.WriteString("_")
+	}
+	sb.WriteString(", ")
+	if s.valueVar != "" {
+		sb.WriteString(s.valueVar)
+	} else {
+		sb.WriteString("_")
+	}
+	sb.WriteString(" := range ")
+	sb.WriteString(s.collectionExpr.ToSource())
+	sb.WriteString(" {\n")
+	for _, stmt := range s.body {
+		sb.WriteString(stmt.ToSource())
+		sb.WriteString("\n")
+	}
+	sb.WriteString("}")
 	return sb.String()
 }
 
@@ -495,12 +601,20 @@ func migrateNode(ctx *MigrationContext, node *tree_sitter.Node) {
 func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node) {
 	var className string
 	var modifiers modifiers
+	var includes []Type
 	iterateChilden(classNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = parseModifiers(child.Utf8Text(ctx.javaSource))
 		case "identifier":
 			className = child.Utf8Text(ctx.javaSource)
+		case "superclass":
+			ty, ok := tryParseType(ctx, child.Child(1))
+			if ok {
+				includes = append(includes, ty)
+			} else {
+				unhandledChild(ctx, child, "superclass")
+			}
 		case "class_body":
 			result := convertClassBody(ctx, toIdentifier(className, modifiers.isPublic()), child)
 			for _, function := range result.functions {
@@ -514,6 +628,7 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 				fields:   result.fields,
 				comments: result.comments,
 				public:   modifiers&PUBLIC != 0,
+				includes: includes,
 			})
 		// ignored
 		case "class":
@@ -565,6 +680,7 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 		case "{":
 		case "}":
 		case "block_comment":
+		case "line_comment":
 		default:
 			unhandledChild(ctx, child, "class_body")
 		}
@@ -623,6 +739,87 @@ func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) [
 		}
 	})
 	return body
+}
+
+func convertSwitchStatement(ctx *MigrationContext, switchNode *tree_sitter.Node) SwitchStatement {
+	condition, conditionInit := convertExpression(ctx, switchNode.ChildByFieldName("condition"))
+	Assert("condition expression is expected to be simple", len(conditionInit) == 0)
+	bodyNode := switchNode.ChildByFieldName("body")
+	var cases []SwitchCase
+	var defaultBody []Statement
+	iterateChilden(bodyNode, func(switchBlockStatementGroup *tree_sitter.Node) {
+		switch switchBlockStatementGroup.Kind() {
+		case "switch_block_statement_group":
+			var caseBody []Statement
+			var caseCondition Expression
+			var isDefault bool
+			iterateChilden(switchBlockStatementGroup, func(child *tree_sitter.Node) {
+				switch child.Kind() {
+				case "switch_label":
+					if child.Utf8Text(ctx.javaSource) == "default" {
+						isDefault = true
+					} else {
+						caseCondition, conditionInit = convertExpression(ctx, child.Child(1))
+						Assert("condition expression is expected to be simple", len(conditionInit) == 0)
+					}
+				// ignored
+				case ":":
+				case "{":
+				case "}":
+				case "->":
+				case "line_comment":
+				case "block_comment":
+				default:
+					var stmts []Statement
+					if child.Kind() == "block" {
+						stmts = convertStatementBlock(ctx, child)
+					} else {
+						stmts = convertStatement(ctx, child)
+					}
+					if isDefault {
+						defaultBody = append(defaultBody, stmts...)
+					} else {
+						caseBody = append(caseBody, stmts...)
+					}
+				}
+			})
+			if !isDefault {
+				cases = append(cases, SwitchCase{
+					condition: caseCondition,
+					body:      caseBody,
+				})
+			}
+		case "switch_rule":
+			caseConditionNode := switchBlockStatementGroup.Child(0)
+			caseCondition := GoExpression{source: caseConditionNode.Utf8Text(ctx.javaSource)}
+			bodyNode := switchBlockStatementGroup.Child(2)
+			for bodyNode.Kind() == "line_comment" || bodyNode.Kind() == ":" || bodyNode.Kind() == "->" {
+				bodyNode = bodyNode.NextSibling()
+			}
+			var caseBody []Statement
+			if bodyNode.Kind() == "block" {
+				caseBody = convertStatementBlock(ctx, bodyNode)
+			} else {
+				caseBody = convertStatement(ctx, bodyNode)
+			}
+			cases = append(cases, SwitchCase{
+				condition: &caseCondition,
+				body:      caseBody,
+			})
+			// ignored
+		case "{":
+		case "}":
+		case "line_comment":
+		case "block_comment":
+		default:
+			unhandledChild(ctx, switchBlockStatementGroup, "switch_block_statement_group")
+		}
+	})
+	return SwitchStatement{
+		condition:   condition,
+		cases:       cases,
+		defaultBody: defaultBody,
+	}
 }
 
 func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]Expression, structName string, constructorNode *tree_sitter.Node) Function {
@@ -691,6 +888,19 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 	switch stmtNode.Kind() {
 	case "line_comment":
 		return nil
+	case "block_comment":
+		return nil
+	case "switch_expression":
+		switchStatement := convertSwitchStatement(ctx, stmtNode)
+		return []Statement{&switchStatement}
+	case "assert_statement":
+		conditionNode := stmtNode.Child(1)
+		conditionExp, initStmts := convertExpression(ctx, conditionNode)
+		Assert("condition expression is expected to be simple", len(initStmts) == 0)
+		return append(initStmts, &IfStatement{
+			condition: conditionExp,
+			body:      []Statement{&GoStatement{source: "panic(\"assertion failed\")"}},
+		})
 	case "expression_statement":
 		var body []Statement
 		iterateChilden(stmtNode, func(child *tree_sitter.Node) {
@@ -714,7 +924,9 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 			//ignored
 			case ";":
 			default:
-				unhandledChild(ctx, child, "expression_statement")
+				expr, initStmts := convertExpression(ctx, child)
+				body = append(body, initStmts...)
+				body = append(body, &GoStatement{source: expr.ToSource() + ";"})
 			}
 		})
 		return body
@@ -731,20 +943,12 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 		})
 		return append(initialStmts, &ReturnStatement{value: value})
 	case "if_statement":
-		conditionNode := stmtNode.ChildByFieldName("condition")
-		conditionExp, stmts := convertExpression(ctx, conditionNode)
-		bodyNode := stmtNode.ChildByFieldName("consequence")
-		bodyStmts := convertStatementBlock(ctx, bodyNode)
-		stmts = append(stmts, &IfStatement{
-			condition: conditionExp,
-			body:      bodyStmts,
-		})
-		cursor := stmtNode.Walk()
-		elseIf := stmtNode.ChildrenByFieldName("alternative", cursor)
-		for _, elseIfNode := range elseIf {
-			stmts = append(stmts, convertStatement(ctx, &elseIfNode)...)
-		}
-		return stmts
+		ifStatement := convertIfStatement(ctx, stmtNode, false)
+		return []Statement{&ifStatement}
+	case "break_statement":
+		return []Statement{&GoStatement{source: "break;"}}
+	case "continue_statement":
+		return []Statement{&GoStatement{source: "continue;"}}
 	case "local_variable_declaration":
 		typeNode := stmtNode.ChildByFieldName("type")
 		ty, ok := tryParseType(ctx, typeNode)
@@ -776,6 +980,38 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 			condition: conditionExp,
 			body:      bodyStmts,
 		})
+	case "for_statement":
+		initNode := stmtNode.ChildByFieldName("init")
+		var initStmts []Statement
+		if initNode != nil {
+			initStmts = convertStatement(ctx, initNode)
+		}
+		conditionNode := stmtNode.ChildByFieldName("condition")
+		conditionExp, s := convertExpression(ctx, conditionNode)
+		initStmts = append(initStmts, s...)
+		updateNode := stmtNode.ChildByFieldName("update")
+		var updateExp Expression
+		if updateNode != nil {
+			var updateStmts []Statement
+			updateExp, updateStmts = convertExpression(ctx, updateNode)
+			initStmts = append(initStmts, updateStmts...)
+		}
+		bodyNode := stmtNode.ChildByFieldName("body")
+		bodyStmts := convertStatementBlock(ctx, bodyNode)
+		return append(initStmts, &ForStatement{
+			condition: conditionExp,
+			post:      updateExp,
+			body:      bodyStmts,
+		})
+	case "enhanced_for_statement":
+		varName := stmtNode.ChildByFieldName("name").Utf8Text(ctx.javaSource)
+		valueExpr, stmts := convertExpression(ctx, stmtNode.ChildByFieldName("value"))
+		bodyStmts := convertStatementBlock(ctx, stmtNode.ChildByFieldName("body"))
+		return append(stmts, &RangeForStatement{
+			valueVar:       varName,
+			collectionExpr: valueExpr,
+			body:           bodyStmts,
+		})
 	case "throw_statement":
 		valueNode := stmtNode.Child(1)
 		exception := valueNode.ChildByFieldName("type").Utf8Text(ctx.javaSource)
@@ -794,10 +1030,43 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 				},
 			}
 		}
+	case ";":
+		return nil
+	case "yield_statement":
+		expr, init := convertExpression(ctx, stmtNode.Child(1))
+		init = append(init, &GoStatement{source: expr.ToSource() + ";"})
+		return init
 	default:
-		unhandledChild(ctx, stmtNode, "statement")
+		expr, init := convertExpression(ctx, stmtNode)
+		init = append(init, &GoStatement{source: expr.ToSource() + ";"})
+		return init
 	}
-	panic("unreachable")
+}
+
+func convertIfStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node, inner bool) IfStatement {
+	conditionNode := stmtNode.ChildByFieldName("condition")
+	conditionExp, stmts := convertExpression(ctx, conditionNode)
+	Assert("condition expression is expected to be simple", len(stmts) == 0)
+	bodyNode := stmtNode.ChildByFieldName("consequence")
+	bodyStmts := convertStatementBlock(ctx, bodyNode)
+	ifStatement := &IfStatement{
+		condition: conditionExp,
+		body:      bodyStmts,
+	}
+	cursor := stmtNode.Walk()
+	elseIf := stmtNode.ChildrenByFieldName("alternative", cursor)
+	for _, elseIfNode := range elseIf {
+		switch elseIfNode.Kind() {
+		case "if_statement":
+			ifStatement.elseIf = append(ifStatement.elseIf, convertIfStatement(ctx, &elseIfNode, true))
+		case "block":
+			elseBodyStmts := convertStatementBlock(ctx, &elseIfNode)
+			ifStatement.elseStmts = append(ifStatement.elseStmts, elseBodyStmts...)
+		default:
+			unhandledChild(ctx, &elseIfNode, "else_if_statement")
+		}
+	}
+	return *ifStatement
 }
 
 func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode *tree_sitter.Node) []Statement {
@@ -807,6 +1076,8 @@ func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode 
 		switch args.Kind() {
 		case "this":
 			parentCall = "this"
+		case "super":
+			parentCall = "super"
 		case "argument_list":
 			argExp = convertArgumentList(ctx, args)
 		// ignored
@@ -842,11 +1113,85 @@ func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []Exp
 	return args
 }
 
+func tryGetChildByFieldName(node *tree_sitter.Node, fieldName string) *tree_sitter.Node {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child != nil && child.FieldNameForNamedChild(uint32(i)) == fieldName {
+			return child
+		}
+	}
+	return nil
+}
+
 func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Expression, []Statement) {
 	switch expression.Kind() {
+	case "assignment_expression":
+		// TODO: do better
+		return &GoExpression{
+			source: expression.Utf8Text(ctx.javaSource),
+		}, nil
+	case "ternary_expression":
+		// TODO: do better
+		return &GoExpression{
+			source: expression.Utf8Text(ctx.javaSource),
+		}, nil
+	case "array_creation_expression":
+		typeNode := expression.ChildByFieldName("type")
+		ty, ok := tryParseType(ctx, typeNode)
+		if !ok {
+			Fatal(typeNode.ToSexp(), errors.New("unable to parse type in array_creation_expression"))
+		}
+		// dimensions := expression.ChildByFieldName("dimensions")
+		value := tryGetChildByFieldName(expression, "value")
+		arrayInit := GoExpression{
+			// source: fmt.Sprintf("make(%s, %s)", ty.ToSource(), dimensions.Utf8Text(ctx.javaSource)),
+			source: "nil",
+		}
+		if value == nil {
+			return &arrayInit, nil
+		}
+		stmts := []Statement{}
+		arrName := "arr"
+		stmts = append(stmts, &VarDeclaration{name: arrName, ty: ty, value: &arrayInit})
+		iterateChilden(value, func(child *tree_sitter.Node) {
+			switch child.Kind() {
+			case "assignment_expression":
+				exp, init := convertExpression(ctx, child)
+				if len(init) > 0 {
+					Fatal(child.ToSexp(), errors.New("unexpected statements in array_creation_expression"))
+				}
+				stmts = append(stmts, &GoStatement{source: fmt.Sprintf("%s = append(%s, %s)", arrName, arrName, exp.ToSource())})
+			default:
+				unhandledChild(ctx, child, "array_creation_expression")
+			}
+		})
+		return &VarRef{ref: arrName}, stmts
+	case "instanceof_expression":
+		valueNode := expression.ChildByFieldName("left")
+		valueExp, initStmts := convertExpression(ctx, valueNode)
+		Assert("condition expression is expected to be simple", len(initStmts) == 0)
+		typeNode := expression.ChildByFieldName("right")
+		ty, ok := tryParseType(ctx, typeNode)
+		if !ok {
+			Fatal(typeNode.ToSexp(), errors.New("unable to parse type in instanceof_expression"))
+		}
+		return &GoExpression{
+			source: fmt.Sprintf("%s.(%s)", valueExp.ToSource(), ty.ToSource()),
+		}, nil
+	case "update_expression":
+		return &GoExpression{
+			source: expression.Utf8Text(ctx.javaSource),
+		}, nil
+	case "switch_expression":
+		switchStatement := convertSwitchStatement(ctx, expression)
+		return &switchStatement, nil
 	case "identifier":
 		return &VarRef{
 			ref: expression.Utf8Text(ctx.javaSource),
+		}, nil
+	case "array_access":
+		return &GoExpression{
+			source: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "object_creation_expression":
 		ty, isType := tryParseType(ctx, expression.ChildByFieldName("type"))
@@ -873,9 +1218,10 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 				source: fmt.Sprintf("len(%s)", object),
 			}, nil
 		default:
-		return &GoExpression{
-			source: expression.Utf8Text(ctx.javaSource),
-		}, nil
+			// TODO: fix casts
+			return &GoExpression{
+				source: SELF_REF + "." + expression.Utf8Text(ctx.javaSource),
+			}, nil
 		}
 	case "return":
 		var initStmts []Statement
@@ -943,7 +1289,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		var operator string
 		iterateChilden(expression, func(child *tree_sitter.Node) {
 			switch child.Kind() {
-			case "!":
+			case "!", "+", "-", "~":
 				operator = child.Utf8Text(ctx.javaSource)
 			}
 		})
@@ -966,6 +1312,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		}, initStmts
 	default:
 		fmt.Println(expression.Utf8Text(ctx.javaSource))
+		expression.Parent()
 		Fatal(expression.ToSexp(), errors.New("unhandled expression kind: "+expression.Kind()))
 	}
 	panic("unreachable")
@@ -1106,9 +1453,12 @@ func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (Type, bool) {
 	case "type_identifier":
 		var goType string
 		typeName := node.Utf8Text(ctx.javaSource)
-		if strings.HasPrefix(typeName, "Abstract") {
-			goType = typeName[len("Abstract"):]
-			return Type(goType), true
+		unwantedPrefixes := []string{"Abstract", "LexerTerminals", "ST"}
+		for _, prefix := range unwantedPrefixes {
+			if strings.HasPrefix(typeName, prefix) {
+				goType = typeName[len(prefix):]
+				return Type(goType), true
+			}
 		}
 		if strings.HasPrefix(typeName, "ST") {
 			goType = "internal." + typeName
@@ -1117,8 +1467,12 @@ func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (Type, bool) {
 		switch typeName {
 		case "Object":
 			goType = "interface{}"
+		case "String":
+			goType = "string"
 		case "DiagnosticCode":
 			goType = "diagnostics.DiagnosticCode"
+		case "SyntaxKind":
+			goType = "common.SyntaxKind"
 		default:
 			goType = typeName
 		}
