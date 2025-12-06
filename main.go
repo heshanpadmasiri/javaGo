@@ -12,12 +12,15 @@ import (
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 )
 
-const SELF_REF = "this"
-const PACKAGE_NAME = "converted"
+const (
+	SELF_REF     = "this"
+	PACKAGE_NAME = "converted"
+)
 
 type MigrationContext struct {
 	source     GoSource
 	javaSource []byte
+	inReturn   bool
 }
 
 // TODO: add constants and vars
@@ -240,7 +243,7 @@ func (s *SwitchStatement) ToSource() string {
 	sb.WriteString(" {\n")
 	for _, cs := range s.cases {
 		conditionStr := cs.condition.ToSource()
-		if (conditionStr == "default") {
+		if conditionStr == "default" {
 			sb.WriteString("default:\n")
 			for _, stmt := range cs.body {
 				sb.WriteString(stmt.ToSource())
@@ -252,10 +255,14 @@ func (s *SwitchStatement) ToSource() string {
 				conditionStr = strings.TrimPrefix(conditionStr, "case ")
 			}
 			sb.WriteString(conditionStr)
-			sb.WriteString(":\n")
-			for _, stmt := range cs.body {
-				sb.WriteString(stmt.ToSource())
-				sb.WriteString("\n")
+			if len(cs.body) > 0 {
+				sb.WriteString(":\n")
+				for _, stmt := range cs.body {
+					sb.WriteString(stmt.ToSource())
+					sb.WriteString("\n")
+				}
+			} else {
+				sb.WriteString(",\n")
 			}
 		}
 	}
@@ -731,7 +738,7 @@ func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) [
 	var body []Statement
 	iterateChilden(blockNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
-		//ignored
+		// ignored
 		case "{":
 		case "}":
 		default:
@@ -815,6 +822,7 @@ func convertSwitchStatement(ctx *MigrationContext, switchNode *tree_sitter.Node)
 			unhandledChild(ctx, switchBlockStatementGroup, "switch_block_statement_group")
 		}
 	})
+	// TODO: if in return properly detect value points and add returns
 	return SwitchStatement{
 		condition:   condition,
 		cases:       cases,
@@ -921,7 +929,7 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 				callExperession, initStmts := convertExpression(ctx, child)
 				body = append(body, initStmts...)
 				body = append(body, &CallStatement{exp: callExperession})
-			//ignored
+			// ignored
 			case ";":
 			default:
 				expr, initStmts := convertExpression(ctx, child)
@@ -933,6 +941,7 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 	case "return_statement":
 		var initialStmts []Statement
 		var value Expression
+		ctx.inReturn = true
 		iterateChilden(stmtNode, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case ";":
@@ -941,6 +950,13 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 				value, initialStmts = convertExpression(ctx, child)
 			}
 		})
+		ctx.inReturn = true
+		// Check if value is a SwitchStatement
+		if switchStmt, ok := value.(*SwitchStatement); ok {
+			// If value is a SwitchStatement, flatten to its switch form
+			// Not conventional return, treat as statement
+			return append(initialStmts, switchStmt)
+		}
 		return append(initialStmts, &ReturnStatement{value: value})
 	case "if_statement":
 		ifStatement := convertIfStatement(ctx, stmtNode, false)
@@ -963,7 +979,8 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 				&VarDeclaration{
 					name: name,
 					ty:   ty,
-				}}
+				},
+			}
 		}
 		valueExpr, initStmts := convertExpression(ctx, valueNode)
 		return append(initStmts, &VarDeclaration{
@@ -1091,7 +1108,9 @@ func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode 
 			exp: &CallExpression{
 				function: parentCall,
 				args:     argExp,
-			}}}
+			},
+		},
+	}
 }
 
 func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []Expression {
