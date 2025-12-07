@@ -305,6 +305,30 @@ func (s *VarDeclaration) ToSource() string {
 	return fmt.Sprintf("var %s %s", s.name, s.ty.ToSource())
 }
 
+func (s *IfStatement) writeElseIfChain(sb *strings.Builder, elseIfs []IfStatement) {
+	for _, elseIf := range elseIfs {
+		sb.WriteString("else if ")
+		sb.WriteString(elseIf.condition.ToSource())
+		sb.WriteString(" {\n")
+		for _, stmt := range elseIf.body {
+			sb.WriteString(stmt.ToSource())
+			sb.WriteString("\n")
+		}
+		sb.WriteString("}")
+		// Recursively handle nested else-if chains
+		s.writeElseIfChain(sb, elseIf.elseIf)
+		// Handle the final else block at this level
+		if len(elseIf.elseStmts) > 0 {
+			sb.WriteString("else {\n")
+			for _, stmt := range elseIf.elseStmts {
+				sb.WriteString(stmt.ToSource())
+				sb.WriteString("\n")
+			}
+			sb.WriteString("}")
+		}
+	}
+}
+
 func (s *IfStatement) ToSource() string {
 	sb := strings.Builder{}
 	sb.WriteString("if ")
@@ -315,16 +339,9 @@ func (s *IfStatement) ToSource() string {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("}")
-	for _, elseIf := range s.elseIf {
-		sb.WriteString("else if ")
-		sb.WriteString(elseIf.condition.ToSource())
-		sb.WriteString(" {\n")
-		for _, stmt := range elseIf.body {
-			sb.WriteString(stmt.ToSource())
-			sb.WriteString("\n")
-		}
-		sb.WriteString("}")
-	}
+	// Write all else-if chains recursively
+	s.writeElseIfChain(&sb, s.elseIf)
+	// Handle the final else block at the top level
 	if len(s.elseStmts) > 0 {
 		sb.WriteString("else {\n")
 		for _, stmt := range s.elseStmts {
