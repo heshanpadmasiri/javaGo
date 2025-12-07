@@ -476,6 +476,86 @@ func (s *CallStatement) ToSource() string {
 	return s.exp.ToSource()
 }
 
+type CatchClause struct {
+	exceptionType string
+	exceptionVar  string
+	body          []Statement
+}
+
+type TryStatement struct {
+	tryBody      []Statement
+	catchClauses []CatchClause
+	finallyBody  []Statement
+}
+
+func (s *TryStatement) ToSource() string {
+	sb := strings.Builder{}
+	// Wrap try body in an IIFE with defer/recover
+	sb.WriteString("func() {\n")
+	// Add defer with recover
+	sb.WriteString("    defer func() {\n")
+	sb.WriteString("        if r := recover(); r != nil {\n")
+	// Handle catch clauses
+	if len(s.catchClauses) > 0 {
+		for i, catch := range s.catchClauses {
+			if i == 0 {
+				sb.WriteString(fmt.Sprintf("            if _, ok := r.(%s); ok {\n", catch.exceptionType))
+			} else {
+				sb.WriteString(fmt.Sprintf("            } else if _, ok := r.(%s); ok {\n", catch.exceptionType))
+			}
+			// Write catch body
+			for _, stmt := range catch.body {
+				stmtSource := stmt.ToSource()
+				// Indent each line
+				lines := strings.Split(stmtSource, "\n")
+				for _, line := range lines {
+					if strings.TrimSpace(line) != "" {
+						sb.WriteString("                ")
+						sb.WriteString(line)
+						sb.WriteString("\n")
+					}
+				}
+			}
+		}
+		sb.WriteString("            } else {\n")
+		sb.WriteString("                panic(r) // re-panic if it's not a handled exception\n")
+		sb.WriteString("            }\n")
+	} else {
+		// No catch clauses, just re-panic
+		sb.WriteString("            panic(r)\n")
+	}
+	sb.WriteString("        }\n")
+	sb.WriteString("    }()\n")
+	// Write try body
+	for _, stmt := range s.tryBody {
+		stmtSource := stmt.ToSource()
+		// Indent each line
+		lines := strings.Split(stmtSource, "\n")
+		for _, line := range lines {
+			if strings.TrimSpace(line) != "" {
+				sb.WriteString("    ")
+				sb.WriteString(line)
+				sb.WriteString("\n")
+			}
+		}
+	}
+	sb.WriteString("}()\n")
+	// Write finally block if present
+	if len(s.finallyBody) > 0 {
+		for _, stmt := range s.finallyBody {
+			stmtSource := stmt.ToSource()
+			lines := strings.Split(stmtSource, "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					sb.WriteString(line)
+					sb.WriteString("\n")
+				}
+			}
+		}
+	}
+	return sb.String()
+}
+
 type Expression interface {
 	SourceElement
 }
@@ -1116,10 +1196,99 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 		expr, init := convertExpression(ctx, stmtNode.Child(1))
 		init = append(init, &GoStatement{source: expr.ToSource() + ";"})
 		return init
+	case "try_statement":
+		tryStatement := convertTryStatement(ctx, stmtNode)
+		return []Statement{&tryStatement}
 	default:
 		expr, init := convertExpression(ctx, stmtNode)
 		init = append(init, &GoStatement{source: expr.ToSource() + ";"})
 		return init
+	}
+}
+
+func convertTryStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) TryStatement {
+	var tryBody []Statement
+	var catchClauses []CatchClause
+	var finallyBody []Statement
+
+	// Get try body
+	bodyNode := stmtNode.ChildByFieldName("body")
+	if bodyNode != nil {
+		tryBody = convertStatementBlock(ctx, bodyNode)
+	}
+
+	// Check for finally using field name
+	finallyNode := stmtNode.ChildByFieldName("finally")
+	if finallyNode != nil {
+		finallyBodyNode := finallyNode.ChildByFieldName("body")
+		if finallyBodyNode != nil {
+			finallyBody = convertStatementBlock(ctx, finallyBodyNode)
+		} else if finallyNode.Kind() == "block" {
+			finallyBody = convertStatementBlock(ctx, finallyNode)
+		}
+	}
+
+	// Iterate through children to find catch clauses and finally
+	iterateChilden(stmtNode, func(child *tree_sitter.Node) {
+		if child.Kind() == "catch_clause" {
+			var exceptionType string
+			var exceptionVar string
+			var catchBody []Statement
+
+			// Find catch_formal_parameter
+			iterateChilden(child, func(catchChild *tree_sitter.Node) {
+				if catchChild.Kind() == "catch_formal_parameter" {
+					// Find catch_type
+					iterateChilden(catchChild, func(paramChild *tree_sitter.Node) {
+						if paramChild.Kind() == "catch_type" {
+							// Get the type identifier from catch_type
+							iterateChilden(paramChild, func(typeChild *tree_sitter.Node) {
+								if typeChild.Kind() == "type_identifier" || typeChild.Kind() == "scoped_type_identifier" {
+									exceptionType = typeChild.Utf8Text(ctx.javaSource)
+								}
+							})
+						}
+					})
+					// Get name field
+					nameNode := catchChild.ChildByFieldName("name")
+					if nameNode != nil {
+						exceptionVar = nameNode.Utf8Text(ctx.javaSource)
+					}
+				}
+			})
+			// Get catch body
+			catchBodyNode := child.ChildByFieldName("body")
+			if catchBodyNode != nil {
+				catchBody = convertStatementBlock(ctx, catchBodyNode)
+			}
+
+			if exceptionType != "" {
+				catchClauses = append(catchClauses, CatchClause{
+					exceptionType: exceptionType,
+					exceptionVar:  exceptionVar,
+					body:          catchBody,
+				})
+			}
+		} else if child.Kind() == "finally_clause" {
+			// Get finally body
+			finallyBodyNode := child.ChildByFieldName("body")
+			if finallyBodyNode != nil {
+				finallyBody = convertStatementBlock(ctx, finallyBodyNode)
+			} else {
+				// Look for block as direct child
+				iterateChilden(child, func(fc *tree_sitter.Node) {
+					if fc.Kind() == "block" {
+						finallyBody = convertStatementBlock(ctx, fc)
+					}
+				})
+			}
+		}
+	})
+
+	return TryStatement{
+		tryBody:      tryBody,
+		catchClauses: catchClauses,
+		finallyBody:  finallyBody,
 	}
 }
 

@@ -329,3 +329,148 @@ func TestArrayInitializerTranslation(t *testing.T) {
 		})
 	}
 }
+
+func TestTryCatchTranslation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string // Strings that must appear in output
+	}{
+		{
+			name: "Single catch clause with IllegalStateException",
+			input: `class Test {
+    Solution getCompletion(ParserRuleContext context, STToken nextToken) {
+        ArrayDeque<ParserRuleContext> tempCtxStack = this.ctxStack;
+        this.ctxStack = getCtxStackSnapshot();
+
+        Solution sol;
+        try {
+            sol = getInsertSolution(context);
+        } catch (IllegalStateException exception) {
+            assert false : "Oh no, something went bad";
+            sol = getResolution(context, nextToken);
+        }
+
+        this.ctxStack = tempCtxStack;
+        return sol;
+    }
+}`,
+			expected: []string{
+				"var sol Solution",
+				"func() {",
+				"defer func() {",
+				"if r := recover(); r != nil {",
+				"if _, ok := r.(IllegalStateException); ok {",
+				"sol = this.getResolution(context, nextToken)",
+				"panic(r)",
+				"sol = this.getInsertSolution(context)",
+			},
+		},
+		{
+			name: "Multiple catch clauses",
+			input: `class Test {
+    void test() {
+        try {
+            riskyOperation();
+        } catch (IllegalArgumentException e) {
+            handleIllegal(e);
+        } catch (IllegalStateException e) {
+            handleState(e);
+        }
+    }
+}`,
+			expected: []string{
+				"func() {",
+				"defer func() {",
+				"if r := recover(); r != nil {",
+				"if _, ok := r.(IllegalArgumentException); ok {",
+				"this.handleIllegal(e)",
+				"if _, ok := r.(IllegalStateException); ok {",
+				"this.handleState(e)",
+			},
+		},
+		{
+			name: "Try-catch with finally block",
+			input: `class Test {
+    void test() {
+        try {
+            doSomething();
+        } catch (Exception e) {
+            handleError(e);
+        } finally {
+            cleanup();
+        }
+    }
+}`,
+			expected: []string{
+				"func() {",
+				"defer func() {",
+				"if r := recover(); r != nil {",
+				"if _, ok := r.(Exception); ok {",
+				"this.handleError(e)",
+				"this.cleanup()",
+			},
+		},
+		{
+			name: "Try-catch with variable assignment in try block",
+			input: `class Test {
+    int calculate() {
+        int result;
+        try {
+            result = compute();
+        } catch (RuntimeException e) {
+            result = defaultValue();
+        }
+        return result;
+    }
+}`,
+			expected: []string{
+				"var result int",
+				"func() {",
+				"defer func() {",
+				"if r := recover(); r != nil {",
+				"if _, ok := r.(RuntimeException); ok {",
+				"result = this.compute()",
+				"result = this.defaultValue()",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp file
+			tmpfile, err := os.CreateTemp("", "test_*.java")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(tmpfile.Name())
+
+			if _, err := tmpfile.Write([]byte(tt.input)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tmpfile.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			// Run translation
+			content, err := os.ReadFile(tmpfile.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			tree := parseJava(content)
+			defer tree.Close()
+
+			ctx := &MigrationContext{javaSource: content}
+			migrateTree(ctx, tree)
+			result := ctx.source.ToSource()
+
+			// Check all expected strings are present
+			for _, exp := range tt.expected {
+				if !strings.Contains(result, exp) {
+					t.Errorf("Expected output to contain %q, but got:\n%s", exp, result)
+				}
+			}
+		})
+	}
+}
