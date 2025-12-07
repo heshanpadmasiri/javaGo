@@ -27,8 +27,22 @@ type MigrationContext struct {
 type GoSource struct {
 	imports   []Import
 	structs   []Struct
+	vars      []ModuleVar
 	functions []Function
 	methods   []Method
+}
+
+type ModuleVar struct {
+	name  string
+	ty    Type
+	value Expression
+}
+
+func (v *ModuleVar) ToSource() string {
+	if v.value != nil {
+		return fmt.Sprintf("var %s = %s", v.name, v.value.ToSource())
+	}
+	return fmt.Sprintf("var %s %s", v.name, v.ty.ToSource())
 }
 
 func (s *GoSource) ToSource() string {
@@ -47,6 +61,10 @@ func (s *GoSource) ToSource() string {
 	}
 	for _, strct := range s.structs {
 		sb.WriteString(strct.ToSource())
+		sb.WriteString("\n")
+	}
+	for _, v := range s.vars {
+		sb.WriteString(v.ToSource())
 		sb.WriteString("\n")
 	}
 	for _, fn := range s.functions {
@@ -570,6 +588,25 @@ func (e *UnhandledExpression) ToSource() string {
 	return e.text
 }
 
+type ArrayLiteral struct {
+	elementType Type
+	elements    []Expression
+}
+
+func (e *ArrayLiteral) ToSource() string {
+	sb := strings.Builder{}
+	sb.WriteString(e.elementType.ToSource())
+	sb.WriteString("{")
+	for i, elem := range e.elements {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(elem.ToSource())
+	}
+	sb.WriteString("}")
+	return sb.String()
+}
+
 type SourceElement interface {
 	ToSource() string
 }
@@ -677,13 +714,22 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 		case "class_declaration":
 			migrateClassDeclaration(ctx, child)
 		case "field_declaration":
-			// TODO: if the field is static make it a var
-			field, initExpr := convertFieldDeclaration(ctx, child)
-			if initExpr != nil {
-				Assert("mutiple initializations for field"+field.name, fieldInitValues[field.name] == nil)
-				fieldInitValues[field.name] = initExpr
+			field, initExpr, mods := convertFieldDeclaration(ctx, child)
+			// If field is static final, add as module-level var
+			if mods&STATIC != 0 {
+				ctx.source.vars = append(ctx.source.vars, ModuleVar{
+					name:  field.name,
+					ty:    field.ty,
+					value: initExpr,
+				})
+			} else {
+				// Regular field
+				if initExpr != nil {
+					Assert("mutiple initializations for field"+field.name, fieldInitValues[field.name] == nil)
+					fieldInitValues[field.name] = initExpr
+				}
+				result.fields = append(result.fields, field)
 			}
-			result.fields = append(result.fields, field)
 		case "constructor_declaration":
 			constructor := convertConstructor(ctx, &fieldInitValues, structName, child)
 			result.functions = append(result.functions, constructor)
@@ -1149,6 +1195,24 @@ func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []Exp
 	return args
 }
 
+func convertArrayInitializer(ctx *MigrationContext, initNode *tree_sitter.Node) []Expression {
+	var elements []Expression
+	iterateChilden(initNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "{", "}", ",":
+			// Structural tokens - ignore
+		default:
+			// Any other node is an element expression
+			exp, init := convertExpression(ctx, child)
+			if len(init) > 0 {
+				Fatal(child.ToSexp(), errors.New("unexpected statements in array initializer"))
+			}
+			elements = append(elements, exp)
+		}
+	})
+	return elements
+}
+
 func tryGetChildByFieldName(node *tree_sitter.Node, fieldName string) *tree_sitter.Node {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.NamedChild(i)
@@ -1177,31 +1241,26 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		if !ok {
 			Fatal(typeNode.ToSexp(), errors.New("unable to parse type in array_creation_expression"))
 		}
-		// dimensions := expression.ChildByFieldName("dimensions")
-		value := tryGetChildByFieldName(expression, "value")
-		arrayInit := GoExpression{
-			// source: fmt.Sprintf("make(%s, %s)", ty.ToSource(), dimensions.Utf8Text(ctx.javaSource)),
-			source: "nil",
+
+		// Check for dimensions to make it an array type
+		dimensionsNode := expression.ChildByFieldName("dimensions")
+		if dimensionsNode != nil {
+			// Add [] prefix to make it an array type
+			ty = Type("[]" + ty.ToSource())
 		}
-		if value == nil {
-			return &arrayInit, nil
+
+		valueNode := expression.ChildByFieldName("value")
+		if valueNode == nil {
+			// No initializer: return nil
+			return &GoExpression{source: "nil"}, nil
 		}
-		stmts := []Statement{}
-		arrName := "arr"
-		stmts = append(stmts, &VarDeclaration{name: arrName, ty: ty, value: &arrayInit})
-		iterateChilden(value, func(child *tree_sitter.Node) {
-			switch child.Kind() {
-			case "assignment_expression":
-				exp, init := convertExpression(ctx, child)
-				if len(init) > 0 {
-					Fatal(child.ToSexp(), errors.New("unexpected statements in array_creation_expression"))
-				}
-				stmts = append(stmts, &GoStatement{source: fmt.Sprintf("%s = append(%s, %s)", arrName, arrName, exp.ToSource())})
-			default:
-				unhandledChild(ctx, child, "array_creation_expression")
-			}
-		})
-		return &VarRef{ref: arrName}, stmts
+
+		// Has initializer: new Type[] { ... }
+		elements := convertArrayInitializer(ctx, valueNode)
+		return &ArrayLiteral{
+			elementType: ty,
+			elements:    elements,
+		}, nil
 	case "instanceof_expression":
 		valueNode := expression.ChildByFieldName("left")
 		valueExp, initStmts := convertExpression(ctx, valueNode)
@@ -1242,6 +1301,28 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		// TODO: properly initialize objects here
 		return &NIL, nil
 	case "field_access":
+		object := expression.ChildByFieldName("object")
+		field := expression.ChildByFieldName("field")
+
+		if object != nil && field != nil {
+			objectText := object.Utf8Text(ctx.javaSource)
+			fieldText := field.Utf8Text(ctx.javaSource)
+
+			// Check if this looks like an enum constant (object is type name, field is uppercase)
+			// Heuristic: if object starts with uppercase, it's likely a type/enum reference
+			if len(objectText) > 0 && objectText[0] >= 'A' && objectText[0] <= 'Z' {
+				// Enum constant: Foo.BAR → Foo_BAR
+				return &VarRef{
+					ref: objectText + "_" + fieldText,
+				}, nil
+			}
+			// Regular field access: keep dot notation
+			return &VarRef{
+				ref: objectText + "." + fieldText,
+			}, nil
+		}
+
+		// Fallback to original text
 		return &VarRef{
 			ref: expression.Utf8Text(ctx.javaSource),
 		}, nil
@@ -1292,6 +1373,10 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 	case "character_literal":
 		return &CharLiteral{
 			value: expression.Utf8Text(ctx.javaSource),
+		}, nil
+	case "string_literal":
+		return &GoExpression{
+			source: expression.Utf8Text(ctx.javaSource),
 		}, nil
 	case "null_literal":
 		return &NIL, nil
@@ -1424,8 +1509,8 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 	return params
 }
 
-func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node) (StructField, Expression) {
-	var modifiers modifiers
+func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node) (StructField, Expression, modifiers) {
+	var mods modifiers
 	var ty Type
 	var name string
 	var comments []string
@@ -1438,11 +1523,21 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 		}
 		switch child.Kind() {
 		case "modifiers":
-			modifiers = parseModifiers(child.Utf8Text(ctx.javaSource))
+			mods = parseModifiers(child.Utf8Text(ctx.javaSource))
 		case "variable_declarator":
 			result := convertVariableDecl(ctx, child)
 			name = result.name
 			initExpr = result.value
+
+			// Handle shorthand array initializer: { 1, 2, 3 }
+			// Check if the value node was array_initializer
+			valueNode := child.ChildByFieldName("value")
+			if valueNode != nil && valueNode.Kind() == "array_initializer" {
+				// convertVariableDecl couldn't handle this (no type info)
+				// Parse it here with type context
+				elements := convertArrayInitializer(ctx, valueNode)
+				initExpr = &ArrayLiteral{elementType: ty, elements: elements}
+			}
 		// ignored
 		case ";":
 		default:
@@ -1452,9 +1547,9 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 	return StructField{
 		name:     name,
 		ty:       ty,
-		public:   modifiers&PUBLIC != 0,
+		public:   mods&PUBLIC != 0,
 		comments: comments,
-	}, initExpr
+	}, initExpr, mods
 }
 
 type variableDeclResult struct {
@@ -1472,6 +1567,14 @@ func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) vari
 	}
 	valueNode := declNode.ChildByFieldName("value")
 	if valueNode != nil {
+		// Skip array_initializer - parent will handle with type context
+		if valueNode.Kind() == "array_initializer" {
+			return variableDeclResult{
+				name:  name,
+				value: nil, // Signal to parent to handle
+			}
+		}
+
 		value, init := convertExpression(ctx, valueNode)
 		Assert("unexpected statements in variable declaration", len(init) == 0)
 		return variableDeclResult{
