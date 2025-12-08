@@ -732,6 +732,7 @@ func migrateNode(ctx *MigrationContext, node *tree_sitter.Node) {
 		migrateClassDeclaration(ctx, node)
 	// Ignored
 	case "block_comment":
+	case "line_comment":
 	case "package_declaration":
 	case "import_declaration":
 	default:
@@ -773,6 +774,8 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 			})
 		// ignored
 		case "class":
+		case "line_comment":
+		case "block_comment":
 		default:
 			unhandledChild(ctx, child, "class_declaration")
 		}
@@ -864,6 +867,8 @@ func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Nod
 			body = append(body, convertStatementBlock(ctx, child)...)
 		// ignored
 		case ";":
+		case "line_comment":
+		case "block_comment":
 		default:
 			unhandledChild(ctx, child, "method_declaration")
 		}
@@ -884,6 +889,8 @@ func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) [
 		// ignored
 		case "{":
 		case "}":
+		case "line_comment":
+		case "block_comment":
 		default:
 			body = append(body, convertStatement(ctx, child)...)
 		}
@@ -988,6 +995,8 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]Expre
 			body = append(body, convertConstructorBody(ctx, fieldInitValues, structName, child)...)
 		// ignored
 		case "identifier":
+		case "line_comment":
+		case "block_comment":
 		default:
 			unhandledChild(ctx, child, "constructor_declaration")
 		}
@@ -1028,6 +1037,8 @@ func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]E
 			// ignored
 		case "{":
 		case "}":
+		case "line_comment":
+		case "block_comment":
 		default:
 			unhandledChild(ctx, child, "constructor_body")
 		}
@@ -1331,6 +1342,8 @@ func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode 
 			argExp = convertArgumentList(ctx, args)
 		// ignored
 		case ";":
+		case "line_comment":
+		case "block_comment":
 		default:
 			unhandledChild(ctx, args, "explicit_constructor_invocation")
 		}
@@ -1353,6 +1366,8 @@ func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []Exp
 		case "(":
 		case ")":
 		case ",":
+		case "line_comment":
+		case "block_comment":
 		default:
 			exp, init := convertExpression(ctx, child)
 			if len(init) > 0 {
@@ -1370,6 +1385,8 @@ func convertArrayInitializer(ctx *MigrationContext, initNode *tree_sitter.Node) 
 		switch child.Kind() {
 		case "{", "}", ",":
 			// Structural tokens - ignore
+		case "line_comment":
+		case "block_comment":
 		default:
 			// Any other node is an element expression
 			exp, init := convertExpression(ctx, child)
@@ -1671,6 +1688,8 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 		case "(":
 		case ")":
 		case ",":
+		case "line_comment":
+		case "block_comment":
 		default:
 			unhandledChild(ctx, child, "formal_parameters")
 		}
@@ -1709,6 +1728,8 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 			}
 		// ignored
 		case ";":
+		case "line_comment":
+		case "block_comment":
 		default:
 			unhandledChild(ctx, child, "field_declaration")
 		}
