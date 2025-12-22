@@ -18,14 +18,18 @@ const (
 )
 
 type MigrationContext struct {
-	source     GoSource
-	javaSource []byte
-	inReturn   bool
+	source         GoSource
+	javaSource     []byte
+	inReturn       bool
+	abstractClasses map[string]bool
+	inDefaultMethod  bool
+	defaultMethodSelf string
 }
 
 // TODO: add constants and vars
 type GoSource struct {
 	imports   []Import
+	interfaces []Interface
 	structs   []Struct
 	vars      []ModuleVar
 	functions []Function
@@ -59,6 +63,10 @@ func (s *GoSource) ToSource() string {
 		}
 		sb.WriteString(")\n\n")
 	}
+	for _, iface := range s.interfaces {
+		sb.WriteString(iface.ToSource())
+		sb.WriteString("\n")
+	}
 	for _, strct := range s.structs {
 		sb.WriteString(strct.ToSource())
 		sb.WriteString("\n")
@@ -88,6 +96,53 @@ func (imp *Import) ToSource() string {
 		return fmt.Sprintf("%s \"%s\"", *imp.alias, imp.packagePath)
 	}
 	return fmt.Sprintf("\"%s\"", imp.packagePath)
+}
+
+type Interface struct {
+	name       string
+	embeds     []Type
+	methods    []InterfaceMethod
+	public     bool
+	comments   []string
+}
+
+type InterfaceMethod struct {
+	name       string
+	params     []Param
+	returnType *Type
+	public     bool
+}
+
+func (i *Interface) ToSource() string {
+	sb := strings.Builder{}
+	addComments(&sb, i.comments)
+	sb.WriteString("type ")
+	sb.WriteString(toIdentifier(i.name, i.public))
+	sb.WriteString(" interface {\n")
+	for _, embed := range i.embeds {
+		sb.WriteString("    ")
+		sb.WriteString(embed.ToSource())
+		sb.WriteString("\n")
+	}
+	for _, method := range i.methods {
+		sb.WriteString("    ")
+		sb.WriteString(toIdentifier(method.name, method.public))
+		sb.WriteString("(")
+		for j, param := range method.params {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(param.ToSource())
+		}
+		sb.WriteString(")")
+		if method.returnType != nil {
+			sb.WriteString(" ")
+			sb.WriteString(method.returnType.ToSource())
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("}\n")
+	return sb.String()
 }
 
 type Struct struct {
@@ -705,7 +760,8 @@ func main() {
 	defer tree.Close()
 
 	ctx := &MigrationContext{
-		javaSource: javaSource,
+		javaSource:      javaSource,
+		abstractClasses: make(map[string]bool),
 	}
 	migrateTree(ctx, tree)
 	goSource := ctx.source.ToSource()
@@ -744,10 +800,12 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 	var className string
 	var modifiers modifiers
 	var includes []Type
+	isAbstract := false
 	iterateChilden(classNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = parseModifiers(child.Utf8Text(ctx.javaSource))
+			isAbstract = modifiers&ABSTRACT != 0
 		case "identifier":
 			className = child.Utf8Text(ctx.javaSource)
 		case "superclass":
@@ -758,20 +816,57 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 				unhandledChild(ctx, child, "superclass")
 			}
 		case "class_body":
-			result := convertClassBody(ctx, toIdentifier(className, modifiers.isPublic()), child)
-			for _, function := range result.functions {
-				ctx.source.functions = append(ctx.source.functions, function)
+			if isAbstract {
+				ctx.abstractClasses[className] = true
+				convertAbstractClass(ctx, className, modifiers, includes, child)
+			} else {
+				// Check if this class extends an abstract class
+				var embeddedTypes []Type
+				extendsAbstract := false
+				for _, include := range includes {
+					baseName := string(include)
+					if ctx.abstractClasses[baseName] {
+						// Embed FooBase and FooMethods
+						embeddedTypes = append(embeddedTypes, Type(capitalizeFirstLetter(baseName)+"Base"))
+						embeddedTypes = append(embeddedTypes, Type(capitalizeFirstLetter(baseName)+"Methods"))
+						extendsAbstract = true
+					} else {
+						embeddedTypes = append(embeddedTypes, include)
+					}
+				}
+				// Use capitalized name if extending abstract class, otherwise use toIdentifier
+				structName := className
+				if extendsAbstract {
+					structName = capitalizeFirstLetter(className)
+				} else {
+					structName = toIdentifier(className, modifiers.isPublic())
+				}
+				result := convertClassBody(ctx, structName, child, false)
+				for _, function := range result.functions {
+					ctx.source.functions = append(ctx.source.functions, function)
+				}
+				for i := range result.methods {
+					method := &result.methods[i]
+					// Capitalize method names if extending abstract class
+					if extendsAbstract {
+						method.name = capitalizeFirstLetter(method.name)
+						method.public = true
+						// Update receiver type to use capitalized struct name
+						method.receiver.ty = Type("*" + structName)
+						// Use single lowercase letter for receiver name (Go convention: first letter of type)
+						receiverName := strings.ToLower(string(structName[0]))
+						method.receiver.name = receiverName
+					}
+					ctx.source.methods = append(ctx.source.methods, *method)
+				}
+				ctx.source.structs = append(ctx.source.structs, Struct{
+					name:     structName,
+					fields:   result.fields,
+					comments: result.comments,
+					public:   extendsAbstract || (modifiers&PUBLIC != 0),
+					includes: embeddedTypes,
+				})
 			}
-			for _, method := range result.methods {
-				ctx.source.methods = append(ctx.source.methods, method)
-			}
-			ctx.source.structs = append(ctx.source.structs, Struct{
-				name:     className,
-				fields:   result.fields,
-				comments: result.comments,
-				public:   modifiers&PUBLIC != 0,
-				includes: includes,
-			})
 		// ignored
 		case "class":
 		case "line_comment":
@@ -782,6 +877,390 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 	})
 }
 
+func convertAbstractClass(ctx *MigrationContext, className string, modifiers modifiers, includes []Type, classBody *tree_sitter.Node) {
+	// Extract fields and methods
+	var fields []StructField
+	var abstractMethods []Function
+	var defaultMethods []Function
+	var comments []string
+	fieldInitValues := map[string]Expression{}
+
+	iterateChilden(classBody, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "class_declaration":
+			migrateClassDeclaration(ctx, child)
+		case "field_declaration":
+			field, initExpr, mods := convertFieldDeclaration(ctx, child)
+			if mods&STATIC != 0 {
+				ctx.source.vars = append(ctx.source.vars, ModuleVar{
+					name:  field.name,
+					ty:    field.ty,
+					value: initExpr,
+				})
+			} else {
+				if initExpr != nil {
+					Assert("mutiple initializations for field"+field.name, fieldInitValues[field.name] == nil)
+					fieldInitValues[field.name] = initExpr
+				}
+				fields = append(fields, field)
+			}
+		case "method_declaration":
+			function, isStatic, isAbstract := convertMethodDeclarationWithAbstract(ctx, child)
+			if !isStatic {
+				if isAbstract {
+					abstractMethods = append(abstractMethods, function)
+				} else {
+					defaultMethods = append(defaultMethods, function)
+				}
+			} else {
+				ctx.source.functions = append(ctx.source.functions, function)
+			}
+		case "constructor_declaration":
+			// Abstract classes can have constructors, but we'll skip them for now
+		// ignored
+		case "{":
+		case "}":
+		case "block_comment":
+		case "line_comment":
+		default:
+			unhandledChild(ctx, child, "class_body")
+		}
+	})
+
+	// Generate FooData interface
+	dataInterfaceName := capitalizeFirstLetter(className) + "Data"
+	var dataMethods []InterfaceMethod
+	for _, field := range fields {
+		fieldName := capitalizeFirstLetter(field.name)
+		getterName := "Get" + fieldName
+		setterName := "Set" + fieldName
+		dataMethods = append(dataMethods, InterfaceMethod{
+			name:       getterName,
+			params:     []Param{},
+			returnType: &field.ty,
+			public:     true,
+		})
+		dataMethods = append(dataMethods, InterfaceMethod{
+			name:       setterName,
+			params:     []Param{{name: toIdentifier(field.name, false), ty: field.ty}},
+			returnType: nil,
+			public:     true,
+		})
+	}
+	ctx.source.interfaces = append(ctx.source.interfaces, Interface{
+		name:     dataInterfaceName,
+		embeds:   []Type{},
+		methods:  dataMethods,
+		public:   true, // Interfaces for abstract classes are always public
+		comments: comments,
+	})
+
+	// Generate FooBase struct
+	baseStructName := capitalizeFirstLetter(className) + "Base"
+	// Capitalize field names in base struct
+	var capitalizedFields []StructField
+	for _, field := range fields {
+		capitalizedFields = append(capitalizedFields, StructField{
+			name:     capitalizeFirstLetter(field.name),
+			ty:       field.ty,
+			public:   true,
+			comments: field.comments,
+		})
+	}
+	ctx.source.structs = append(ctx.source.structs, Struct{
+		name:     baseStructName,
+		includes: []Type{},
+		fields:   capitalizedFields,
+		public:   true, // Base structs for abstract classes are always public
+		comments: comments,
+	})
+
+	// Generate getter/setter methods for FooBase
+	for _, field := range fields {
+		fieldName := capitalizeFirstLetter(field.name)
+		getterName := "Get" + fieldName
+		setterName := "Set" + fieldName
+		ctx.source.methods = append(ctx.source.methods, Method{
+			Function: Function{
+				name:       getterName,
+				params:     []Param{},
+				returnType: &field.ty,
+				body: []Statement{
+					&ReturnStatement{value: &VarRef{ref: "b." + toIdentifier(field.name, true)}},
+				},
+				public: true,
+			},
+			receiver: Param{
+				name: "b",
+				ty:   Type("*" + baseStructName),
+			},
+		})
+		ctx.source.methods = append(ctx.source.methods, Method{
+			Function: Function{
+				name:       setterName,
+				params:     []Param{{name: toIdentifier(field.name, false), ty: field.ty}},
+				returnType: nil,
+				body: []Statement{
+					&AssignStatement{
+						ref:   VarRef{ref: "b." + toIdentifier(field.name, true)},
+						value: &VarRef{ref: toIdentifier(field.name, false)},
+					},
+				},
+				public: true,
+			},
+			receiver: Param{
+				name: "b",
+				ty:   Type("*" + baseStructName),
+			},
+		})
+	}
+
+	// Generate FooMethods struct
+	methodsStructName := capitalizeFirstLetter(className) + "Methods"
+	ctx.source.structs = append(ctx.source.structs, Struct{
+		name:     methodsStructName,
+		includes: []Type{},
+		fields: []StructField{
+			{
+				name:   "Self",
+				ty:     Type(capitalizeFirstLetter(className)),
+				public: true,
+			},
+		},
+		public:   true, // Methods structs for abstract classes are always public
+		comments: comments,
+	})
+
+	// Convert default methods to use m.Self
+	for _, method := range defaultMethods {
+		// Convert method body to use m.Self
+		convertedBody := convertMethodBodyForDefaultMethod(ctx, method.body, className, fields)
+		ctx.source.methods = append(ctx.source.methods, Method{
+			Function: Function{
+				name:       capitalizeFirstLetter(method.name),
+				params:     method.params,
+				returnType: method.returnType,
+				body:       convertedBody,
+				comments:   method.comments,
+				public:     true, // Methods in FooMethods are always public
+			},
+			receiver: Param{
+				name: "m",
+				ty:   Type("*" + methodsStructName),
+			},
+		})
+	}
+
+	// Generate Foo interface
+	var interfaceMethods []InterfaceMethod
+	// Add abstract method signatures - always capitalize for abstract class interfaces
+	for _, method := range abstractMethods {
+		interfaceMethods = append(interfaceMethods, InterfaceMethod{
+			name:       capitalizeFirstLetter(method.name),
+			params:     method.params,
+			returnType: method.returnType,
+			public:     true,
+		})
+	}
+	// Add default method signatures - always capitalize for abstract class interfaces
+	for _, method := range defaultMethods {
+		interfaceMethods = append(interfaceMethods, InterfaceMethod{
+			name:       capitalizeFirstLetter(method.name),
+			params:     method.params,
+			returnType: method.returnType,
+			public:     true,
+		})
+	}
+	ctx.source.interfaces = append(ctx.source.interfaces, Interface{
+		name:     capitalizeFirstLetter(className),
+		embeds:   []Type{Type(dataInterfaceName)},
+		methods:  interfaceMethods,
+		public:   true, // Main interface for abstract classes is always public
+		comments: comments,
+	})
+}
+
+func convertMethodBodyForDefaultMethod(ctx *MigrationContext, body []Statement, className string, fields []StructField) []Statement {
+	var converted []Statement
+	oldInDefaultMethod := ctx.inDefaultMethod
+	oldDefaultMethodSelf := ctx.defaultMethodSelf
+	ctx.inDefaultMethod = true
+	ctx.defaultMethodSelf = "m.Self"
+	defer func() {
+		ctx.inDefaultMethod = oldInDefaultMethod
+		ctx.defaultMethodSelf = oldDefaultMethodSelf
+	}()
+	// Build map of field names for quick lookup
+	fieldMap := make(map[string]bool)
+	for _, field := range fields {
+		fieldMap[field.name] = true
+	}
+	for _, stmt := range body {
+		converted = append(converted, convertStatementForDefaultMethod(ctx, stmt, className, fieldMap))
+	}
+	return converted
+}
+
+func convertStatementForDefaultMethod(ctx *MigrationContext, stmt Statement, className string, fieldMap map[string]bool) Statement {
+	switch s := stmt.(type) {
+	case *GoStatement:
+		// Replace this.field with m.Self.GetField() and this.method() with m.Self.Method()
+		source := s.source
+		// Simple string replacement for common patterns
+		// This is a simplified version - in production you'd want a more sophisticated AST-based approach
+		source = strings.ReplaceAll(source, "this.", ctx.defaultMethodSelf+".")
+		return &GoStatement{source: source}
+	case *ReturnStatement:
+		if s.value != nil {
+			return &ReturnStatement{value: convertExpressionForDefaultMethod(ctx, s.value, className, fieldMap)}
+		}
+		return s
+	case *AssignStatement:
+		// Convert field assignments: this.field = value -> m.Self.SetField(value)
+		refStr := s.ref.ToSource()
+		if strings.HasPrefix(refStr, "this.") {
+			// For now, keep as assignment - we'll need more sophisticated handling
+			return &AssignStatement{
+				ref:   VarRef{ref: strings.ReplaceAll(refStr, "this.", ctx.defaultMethodSelf+".")},
+				value: convertExpressionForDefaultMethod(ctx, s.value, className, fieldMap),
+			}
+		}
+		return &AssignStatement{
+			ref:   s.ref,
+			value: convertExpressionForDefaultMethod(ctx, s.value, className, fieldMap),
+		}
+	case *IfStatement:
+		return &IfStatement{
+			condition: convertExpressionForDefaultMethod(ctx, s.condition, className, fieldMap),
+			body:      convertStatementsForDefaultMethod(ctx, s.body, className, fieldMap),
+			elseIf:    convertElseIfsForDefaultMethod(ctx, s.elseIf, className, fieldMap),
+			elseStmts: convertStatementsForDefaultMethod(ctx, s.elseStmts, className, fieldMap),
+		}
+	case *ForStatement:
+		var initStmt Statement
+		if s.init != nil {
+			initStmt = convertStatementForDefaultMethod(ctx, s.init, className, fieldMap)
+		}
+		var postStmt Statement
+		if s.post != nil {
+			postStmt = convertStatementForDefaultMethod(ctx, s.post, className, fieldMap)
+		}
+		return &ForStatement{
+			init:      initStmt,
+			condition: convertExpressionForDefaultMethod(ctx, s.condition, className, fieldMap),
+			post:      postStmt,
+			body:      convertStatementsForDefaultMethod(ctx, s.body, className, fieldMap),
+		}
+	case *CallStatement:
+		return &CallStatement{
+			exp: convertExpressionForDefaultMethod(ctx, s.exp, className, fieldMap),
+		}
+	default:
+		// For other statement types, try to convert recursively if possible
+		return stmt
+	}
+}
+
+func convertStatementsForDefaultMethod(ctx *MigrationContext, stmts []Statement, className string, fieldMap map[string]bool) []Statement {
+	var converted []Statement
+	for _, stmt := range stmts {
+		converted = append(converted, convertStatementForDefaultMethod(ctx, stmt, className, fieldMap))
+	}
+	return converted
+}
+
+func convertElseIfsForDefaultMethod(ctx *MigrationContext, elseIfs []IfStatement, className string, fieldMap map[string]bool) []IfStatement {
+	var converted []IfStatement
+	for _, elseIf := range elseIfs {
+		converted = append(converted, IfStatement{
+			condition: convertExpressionForDefaultMethod(ctx, elseIf.condition, className, fieldMap),
+			body:      convertStatementsForDefaultMethod(ctx, elseIf.body, className, fieldMap),
+			elseIf:    convertElseIfsForDefaultMethod(ctx, elseIf.elseIf, className, fieldMap),
+			elseStmts: convertStatementsForDefaultMethod(ctx, elseIf.elseStmts, className, fieldMap),
+		})
+	}
+	return converted
+}
+
+func convertExpressionForDefaultMethod(ctx *MigrationContext, expr Expression, className string, fieldMap map[string]bool) Expression {
+	switch e := expr.(type) {
+	case *VarRef:
+		ref := e.ref
+		if strings.HasPrefix(ref, "this.") {
+			fieldName := strings.TrimPrefix(ref, "this.")
+			// Convert to getter: this.field -> m.Self.GetField()
+			capitalized := capitalizeFirstLetter(fieldName)
+			return &VarRef{ref: ctx.defaultMethodSelf + ".Get" + capitalized + "()"}
+		}
+		// Check if this is a bare field reference
+		if fieldMap[ref] {
+			// Convert bare field reference to getter: field -> m.Self.GetField()
+			capitalized := capitalizeFirstLetter(ref)
+			return &VarRef{ref: ctx.defaultMethodSelf + ".Get" + capitalized + "()"}
+		}
+		ref = strings.ReplaceAll(ref, "this.", ctx.defaultMethodSelf+".")
+		return &VarRef{ref: ref}
+	case *CallExpression:
+		funcName := e.function
+		if strings.HasPrefix(funcName, "this.") {
+			funcName = strings.TrimPrefix(funcName, "this.")
+			funcName = ctx.defaultMethodSelf + "." + capitalizeFirstLetter(funcName)
+		} else if funcName == "this" {
+			funcName = ctx.defaultMethodSelf
+		} else if !strings.Contains(funcName, ".") && !fieldMap[funcName] {
+			// Bare method call (not a field) - assume it's a method on self
+			funcName = ctx.defaultMethodSelf + "." + capitalizeFirstLetter(funcName)
+		}
+		var convertedArgs []Expression
+		for _, arg := range e.args {
+			convertedArgs = append(convertedArgs, convertExpressionForDefaultMethod(ctx, arg, className, fieldMap))
+		}
+		return &CallExpression{
+			function: funcName,
+			args:     convertedArgs,
+		}
+	case *BinaryExpression:
+		return &BinaryExpression{
+			left:     convertExpressionForDefaultMethod(ctx, e.left, className, fieldMap),
+			operator: e.operator,
+			right:    convertExpressionForDefaultMethod(ctx, e.right, className, fieldMap),
+		}
+	case *UnaryExpression:
+		return &UnaryExpression{
+			operator: e.operator,
+			operand:  convertExpressionForDefaultMethod(ctx, e.operand, className, fieldMap),
+		}
+	case *GoExpression:
+		source := e.source
+		// Replace this.method() with m.Self.Method() (capitalized)
+		// Pattern: this.methodName( -> m.Self.MethodName(
+		source = strings.ReplaceAll(source, "this.", ctx.defaultMethodSelf+".")
+		// Capitalize method names after m.Self.
+		if strings.Contains(source, ctx.defaultMethodSelf+".") {
+			// Find method calls like m.Self.method( and capitalize method name
+			parts := strings.Split(source, ctx.defaultMethodSelf+".")
+			if len(parts) > 1 {
+				for i := 1; i < len(parts); i++ {
+					// Find the method name (up to the opening parenthesis or end)
+					methodPart := parts[i]
+					methodEnd := strings.IndexAny(methodPart, "(")
+					if methodEnd > 0 {
+						methodName := methodPart[:methodEnd]
+						capitalized := capitalizeFirstLetter(methodName)
+						parts[i] = capitalized + methodPart[methodEnd:]
+					} else {
+						parts[i] = capitalizeFirstLetter(methodPart)
+					}
+				}
+				source = strings.Join(parts, ctx.defaultMethodSelf+".")
+			}
+		}
+		return &GoExpression{source: source}
+	default:
+		return expr
+	}
+}
+
 type classConversionResult struct {
 	fields    []StructField
 	comments  []string
@@ -789,7 +1268,7 @@ type classConversionResult struct {
 	methods   []Method
 }
 
-func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_sitter.Node) classConversionResult {
+func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_sitter.Node, isAbstract bool) classConversionResult {
 	var result classConversionResult
 	fieldInitValues := map[string]Expression{}
 	iterateChilden(classBody, func(child *tree_sitter.Node) {
@@ -843,6 +1322,11 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 
 // TODO: this is very similar to constructor conversion, refactor
 func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Node) (Function, bool) {
+	fn, _, isStatic := convertMethodDeclarationWithAbstract(ctx, methodNode)
+	return fn, isStatic
+}
+
+func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (Function, bool, bool) {
 	var modifiers modifiers
 	var params []Param
 	var body []Statement
@@ -873,13 +1357,18 @@ func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Nod
 			unhandledChild(ctx, child, "method_declaration")
 		}
 	})
+	isAbstract := modifiers&ABSTRACT != 0 && len(body) == 0
+	// If method is abstract and has no body, add panic statement (for non-abstract class methods)
+	if isAbstract && len(body) == 0 {
+		body = append(body, &GoStatement{source: "panic(\"implemented in concrete class\")"})
+	}
 	return Function{
 		name:       name,
 		params:     params,
 		returnType: returnType,
 		body:       body,
 		public:     modifiers&PUBLIC != 0,
-	}, modifiers&STATIC != 0
+	}, modifiers&STATIC != 0, isAbstract
 }
 
 func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) []Statement {

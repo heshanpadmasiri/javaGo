@@ -153,7 +153,10 @@ func TestIfElseTranslation(t *testing.T) {
 			tree := parseJava(content)
 			defer tree.Close()
 
-			ctx := &MigrationContext{javaSource: content}
+			ctx := &MigrationContext{
+				javaSource:      content,
+				abstractClasses: make(map[string]bool),
+			}
 			migrateTree(ctx, tree)
 			result := ctx.source.ToSource()
 
@@ -198,10 +201,7 @@ func TestArrayInitializerTranslation(t *testing.T) {
     }
 }`,
 			expected: []string{
-				"names := []string{",
-				`"Alice"`,
-				`"Bob"`,
-				`"Charlie"`,
+				`names := []string{"Alice", "Bob", "Charlie"}`,
 			},
 		},
 		{
@@ -231,9 +231,7 @@ func TestArrayInitializerTranslation(t *testing.T) {
             { ParserRuleContext.RETURNS_KEYWORD, ParserRuleContext.FUNC_BODY };
 }`,
 			expected: []string{
-				"var FUNC_TYPE_OR_DEF = []ParserRuleContext{",
-				"ParserRuleContext_RETURNS_KEYWORD",
-				"ParserRuleContext_FUNC_BODY",
+				"var FUNC_TYPE_OR_DEF = []ParserRuleContext{ParserRuleContext_RETURNS_KEYWORD, ParserRuleContext_FUNC_BODY}",
 			},
 		},
 		{
@@ -251,10 +249,7 @@ func TestArrayInitializerTranslation(t *testing.T) {
     }
 }`,
 			expected: []string{
-				"alternatives = []ParserRuleContext{",
-				"ParserRuleContext_COMMA",
-				"ParserRuleContext_BINARY_OPERATOR",
-				"ParserRuleContext_ARG_LIST_END",
+				"alternatives = []ParserRuleContext{ParserRuleContext_COMMA, ParserRuleContext_BINARY_OPERATOR, ParserRuleContext_ARG_LIST_END}",
 			},
 		},
 		{
@@ -285,8 +280,7 @@ func TestArrayInitializerTranslation(t *testing.T) {
     }
 }`,
 			expected: []string{
-				"items := []interface{}{",
-				"obj.field",
+				"items := []interface{}{obj.field, this.another.method()}",
 			},
 		},
 	}
@@ -316,14 +310,29 @@ func TestArrayInitializerTranslation(t *testing.T) {
 			tree := parseJava(content)
 			defer tree.Close()
 
-			ctx := &MigrationContext{javaSource: content}
+			ctx := &MigrationContext{
+				javaSource:      content,
+				abstractClasses: make(map[string]bool),
+			}
 			migrateTree(ctx, tree)
 			result := ctx.source.ToSource()
 
-			// Check all expected strings are present
+			// Verify exact structure - check that expected strings appear in order
+			resultLines := strings.Split(result, "\n")
+			lineIndex := 0
 			for _, exp := range tt.expected {
-				if !strings.Contains(result, exp) {
-					t.Errorf("Expected output to contain %q, but got:\n%s", exp, result)
+				found := false
+				// Search from current position forward to ensure order
+				for i := lineIndex; i < len(resultLines); i++ {
+					if strings.Contains(resultLines[i], exp) {
+						found = true
+						lineIndex = i + 1
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected output to contain %q (in order), but got:\n%s", exp, result)
+					return
 				}
 			}
 		})
@@ -430,8 +439,8 @@ func TestTryCatchTranslation(t *testing.T) {
 				"defer func() {",
 				"if r := recover(); r != nil {",
 				"if _, ok := r.(RuntimeException); ok {",
-				"result = this.compute()",
 				"result = this.defaultValue()",
+				"result = this.compute()",
 			},
 		},
 	}
@@ -461,14 +470,243 @@ func TestTryCatchTranslation(t *testing.T) {
 			tree := parseJava(content)
 			defer tree.Close()
 
-			ctx := &MigrationContext{javaSource: content}
+			ctx := &MigrationContext{
+				javaSource:      content,
+				abstractClasses: make(map[string]bool),
+			}
 			migrateTree(ctx, tree)
 			result := ctx.source.ToSource()
 
-			// Check all expected strings are present
+			// Verify exact structure - check that expected strings appear in order
+			resultLines := strings.Split(result, "\n")
+			lineIndex := 0
 			for _, exp := range tt.expected {
-				if !strings.Contains(result, exp) {
-					t.Errorf("Expected output to contain %q, but got:\n%s", exp, result)
+				found := false
+				// Search from current position forward to ensure order
+				for i := lineIndex; i < len(resultLines); i++ {
+					if strings.Contains(resultLines[i], exp) {
+						found = true
+						lineIndex = i + 1
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected output to contain %q (in order), but got:\n%s", exp, result)
+					return
+				}
+			}
+		})
+	}
+}
+
+func TestAbstractMethodTranslation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string // Strings that must appear in output
+	}{
+		{
+			name: "Abstract method with void return type",
+			input: `abstract class Test {
+    public abstract void doSomething();
+}`,
+			expected: []string{
+				"type TestData interface {",
+				"}",
+				"type Test interface {",
+				"    TestData",
+				"    DoSomething()",
+				"}",
+				"type TestBase struct {",
+				"}",
+				"type TestMethods struct {",
+				"    Self Test",
+				"}",
+			},
+		},
+		{
+			name: "Abstract method with return type",
+			input: `abstract class Test {
+    public abstract int calculate();
+}`,
+			expected: []string{
+				"type TestData interface {",
+				"}",
+				"type Test interface {",
+				"    TestData",
+				"    Calculate() int",
+				"}",
+				"type TestBase struct {",
+				"}",
+				"type TestMethods struct {",
+				"    Self Test",
+				"}",
+			},
+		},
+		{
+			name: "Abstract method with parameters",
+			input: `abstract class Test {
+    public abstract String process(String input, int count);
+}`,
+			expected: []string{
+				"type TestData interface {",
+				"}",
+				"type Test interface {",
+				"    TestData",
+				"    Process(input string, count int) string",
+				"}",
+				"type TestBase struct {",
+				"}",
+				"type TestMethods struct {",
+				"    Self Test",
+				"}",
+			},
+		},
+		{
+			name: "Non-abstract method should not have panic",
+			input: `class Test {
+    public void doSomething() {
+        System.out.println("Hello");
+    }
+}`,
+			expected: []string{
+				"System.out.println",
+			},
+		},
+		{
+			name: "Abstract and non-abstract methods in same class",
+			input: `abstract class Test {
+    public abstract void abstractMethod();
+    public void concreteMethod() {
+        System.out.println("Concrete");
+    }
+}`,
+			expected: []string{
+				"type TestData interface {",
+				"}",
+				"type Test interface {",
+				"    TestData",
+				"    AbstractMethod()",
+				"    ConcreteMethod()",
+				"}",
+				"type TestBase struct {",
+				"}",
+				"type TestMethods struct {",
+				"    Self Test",
+				"}",
+				"func (m *TestMethods) ConcreteMethod() {",
+				"m.Self.System.out.println",
+				"}",
+			},
+		},
+		{
+			name: "Abstract class with fields and methods",
+			input: `abstract class Foo {
+    int a;
+    abstract int f();
+    int b() {
+        return f() + a;
+    }
+}`,
+			expected: []string{
+				"type FooData interface {",
+				"    GetA() int",
+				"    SetA(a int)",
+				"}",
+				"type Foo interface {",
+				"    FooData",
+				"    F() int",
+				"    B() int",
+				"}",
+				"type FooBase struct {",
+				"    A int",
+				"}",
+				"type FooMethods struct {",
+				"    Self Foo",
+				"}",
+				"func (b *FooBase) GetA() int {",
+				"return b.A",
+				"}",
+				"func (b *FooBase) SetA(a int) {",
+				"b.A = a",
+				"}",
+				"func (m *FooMethods) B() int {",
+				"return (m.Self.F() + m.Self.GetA())",
+				"}",
+			},
+		},
+		{
+			name: "Subclass extending abstract class",
+			input: `abstract class Foo {
+    int a;
+    abstract int f();
+    int b() {
+        return f() + a;
+    }
+}
+class Bar extends Foo {
+    int f() {
+        return 42;
+    }
+}`,
+			expected: []string{
+				"type Bar struct",
+				"FooBase",
+				"FooMethods",
+				"func (b *Bar) F() int",
+				"return 42",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp file
+			tmpfile, err := os.CreateTemp("", "test_*.java")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(tmpfile.Name())
+
+			if _, err := tmpfile.Write([]byte(tt.input)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tmpfile.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			// Run translation
+			content, err := os.ReadFile(tmpfile.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			tree := parseJava(content)
+			defer tree.Close()
+
+			ctx := &MigrationContext{
+				javaSource:      content,
+				abstractClasses: make(map[string]bool),
+			}
+			migrateTree(ctx, tree)
+			result := ctx.source.ToSource()
+
+			// Verify exact structure - check that expected strings appear in order
+			resultLines := strings.Split(result, "\n")
+			lineIndex := 0
+			for _, exp := range tt.expected {
+				found := false
+				// Search from current position forward to ensure order
+				for i := lineIndex; i < len(resultLines); i++ {
+					if strings.Contains(resultLines[i], exp) {
+						found = true
+						lineIndex = i + 1
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected output to contain %q (in order), but got:\n%s", exp, result)
+					return
 				}
 			}
 		})
