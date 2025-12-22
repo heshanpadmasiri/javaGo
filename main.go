@@ -3569,6 +3569,45 @@ func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) vari
 
 func tryParseType(ctx *MigrationContext, node *tree_sitter.Node) (Type, bool) {
 	switch node.Kind() {
+	case "scoped_type_identifier":
+		// For scoped types like Atom.Kind, we only use the second part (Kind)
+		// since Go doesn't have nested types
+		var typeName string
+		// The last type_identifier child is the actual type we want
+		iterateChilden(node, func(child *tree_sitter.Node) {
+			if child.Kind() == "type_identifier" {
+				typeName = child.Utf8Text(ctx.javaSource)
+			}
+		})
+		if typeName == "" {
+			return "", false
+		}
+		// Process the type name the same way as a regular type_identifier
+		var goType string
+		unwantedPrefixes := []string{"Abstract", "LexerTerminals", "ST"}
+		for _, prefix := range unwantedPrefixes {
+			if strings.HasPrefix(typeName, prefix) {
+				goType = typeName[len(prefix):]
+				return Type(goType), true
+			}
+		}
+		if strings.HasPrefix(typeName, "ST") {
+			goType = "internal." + typeName
+			return Type(goType), true
+		}
+		switch typeName {
+		case "Object":
+			goType = "interface{}"
+		case "String":
+			goType = "string"
+		case "DiagnosticCode":
+			goType = "diagnostics.DiagnosticCode"
+		case "SyntaxKind":
+			goType = "common.SyntaxKind"
+		default:
+			goType = typeName
+		}
+		return Type(goType), true
 	case "type_identifier":
 		var goType string
 		typeName := node.Utf8Text(ctx.javaSource)
