@@ -965,11 +965,11 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 				})
 				// Generate type assertions for implemented interfaces
 				for _, ifaceType := range implementedInterfaces {
-					// Create type assertion: var _ InterfaceName = StructName{}
+					// Create type assertion: var _ InterfaceName = &StructName{}
 					ctx.source.vars = append(ctx.source.vars, ModuleVar{
 						name:  "_",
 						ty:    ifaceType,
-						value: &VarRef{ref: structName + "{}"},
+						value: &VarRef{ref: "&" + structName + "{}"},
 					})
 				}
 			}
@@ -1108,11 +1108,11 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 
 	// Generate type assertions for implemented interfaces
 	for _, ifaceType := range implementedInterfaces {
-		// Create type assertion: var _ InterfaceName = StructName{}
+		// Create type assertion: var _ InterfaceName = &StructName{}
 		ctx.source.vars = append(ctx.source.vars, ModuleVar{
 			name:  "_",
 			ty:    ifaceType,
-			value: &VarRef{ref: structName + "{}"},
+			value: &VarRef{ref: "&" + structName + "{}"},
 		})
 	}
 }
