@@ -2127,6 +2127,10 @@ func convertParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []Pa
 	return params
 }
 
+func isArrayOrSliceType(ty Type) bool {
+	return strings.HasPrefix(string(ty), "[]")
+}
+
 func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []Param {
 	var params []Param
 	iterateChilden(paramsNode, func(child *tree_sitter.Node) {
@@ -2143,6 +2147,10 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 			ty, ok := tryParseType(ctx, typeNode)
 			if !ok {
 				Fatal(typeNode.ToSexp(), errors.New("unable to parse type in formal_parameter"))
+			}
+			// Convert array types to pointer-to-array for parameters
+			if isArrayOrSliceType(ty) {
+				ty = Type("*" + ty)
 			}
 			params = append(params, Param{
 				name: nameNode.Utf8Text(ctx.javaSource),
