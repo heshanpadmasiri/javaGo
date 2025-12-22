@@ -1054,6 +1054,19 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 				structFieldName := toIdentifier(field.name, true) // Always public for records
 				fieldNameMap[originalName] = structFieldName
 			}
+			// Extract compact constructor before processing class body
+			var compactConstructorNode *tree_sitter.Node
+			iterateChilden(child, func(bodyChild *tree_sitter.Node) {
+				if bodyChild.Kind() == "compact_constructor_declaration" {
+					compactConstructorNode = bodyChild
+				}
+			})
+			// Convert compact constructor if present
+			if compactConstructorNode != nil {
+				structName := toIdentifier(recordName, modifiers.isPublic())
+				compactConstructor := convertCompactConstructor(ctx, fields, structName, compactConstructorNode)
+				ctx.source.functions = append(ctx.source.functions, compactConstructor)
+			}
 			result := convertClassBody(ctx, recordName, child, false)
 			// Add any additional fields from the body
 			fields = append(fields, result.fields...)
@@ -2284,6 +2297,8 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 		case "constructor_declaration":
 			constructor := convertConstructor(ctx, &fieldInitValues, structName, child)
 			result.functions = append(result.functions, constructor)
+		case "compact_constructor_declaration":
+			// Compact constructors are handled in migrateRecordDeclaration, skip here
 		case "method_declaration":
 			function, isStatic := convertMethodDeclaration(ctx, child)
 			if isStatic {
@@ -2537,6 +2552,107 @@ func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]E
 		case "block_comment":
 		default:
 			unhandledChild(ctx, child, "constructor_body")
+		}
+	})
+	return body
+}
+
+// convertRecordComponentsToParams converts record components (StructField) to function parameters (Param)
+// Applies the same array-to-pointer conversion as convertFormalParameters for consistency
+func convertRecordComponentsToParams(components []StructField) []Param {
+	var params []Param
+	for _, component := range components {
+		ty := component.ty
+		// Convert array types to pointer-to-array for parameters (same as convertFormalParameters)
+		if isArrayOrSliceType(ty) {
+			ty = Type("*" + ty)
+		}
+		params = append(params, Param{
+			name: component.name,
+			ty:   ty,
+		})
+	}
+	return params
+}
+
+func convertCompactConstructor(ctx *MigrationContext, recordComponents []StructField, structName string, compactConstructorNode *tree_sitter.Node) Function {
+	var modifiers modifiers
+	var body []Statement
+	// Convert record components to parameters
+	params := convertRecordComponentsToParams(recordComponents)
+	// Initialize struct
+	body = append(body, &GoStatement{source: fmt.Sprintf("%s := %s{};", SELF_REF, structName)})
+	// Process compact constructor body
+	iterateChilden(compactConstructorNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "modifiers":
+			modifiers = parseModifiers(child.Utf8Text(ctx.javaSource))
+		case "block":
+			// Compact constructor body is a block
+			body = append(body, convertCompactConstructorBody(ctx, recordComponents, structName, child)...)
+		// ignored
+		case "identifier":
+		case "line_comment":
+		case "block_comment":
+		default:
+			unhandledChild(ctx, child, "compact_constructor_declaration")
+		}
+	})
+	// After body execution, assign parameters to struct fields
+	for _, component := range recordComponents {
+		structFieldName := toIdentifier(component.name, true) // Always public for records
+		paramName := component.name
+		body = append(body, &AssignStatement{
+			ref:   VarRef{ref: SELF_REF + "." + structFieldName},
+			value: &VarRef{ref: paramName},
+		})
+	}
+	body = append(body, &ReturnStatement{value: &VarRef{ref: SELF_REF}})
+	// Generate function name: newStructNameFromParam1Param2...
+	nameBuilder := strings.Builder{}
+	nameBuilder.WriteString(toIdentifier("new", modifiers.isPublic()))
+	nameBuilder.WriteString(capitalizeFirstLetter(structName))
+	nameBuilder.WriteString("From")
+	for _, param := range params {
+		nameBuilder.WriteString(capitalizeFirstLetter(param.name))
+	}
+	name := nameBuilder.String()
+	retTy := Type(structName)
+	return Function{
+		name:       name,
+		params:     params,
+		returnType: &retTy,
+		body:       body,
+		public:     modifiers&PUBLIC != 0,
+	}
+}
+
+func convertCompactConstructorBody(ctx *MigrationContext, recordComponents []StructField, structName string, bodyNode *tree_sitter.Node) []Statement {
+	var body []Statement
+	// Process statements in the compact constructor body
+	// Unlike regular constructors, compact constructors cannot have:
+	// - Explicit constructor invocations (this(...) or super(...))
+	// - Explicit assignments to component fields (they're implicit)
+	// The body can contain validation/normalization logic that modifies parameters
+	iterateChilden(bodyNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		// Handle all statement types by delegating to convertStatement
+		case "if_statement", "expression_statement", "local_variable_declaration",
+			"return_statement", "break_statement", "continue_statement",
+			"while_statement", "for_statement", "enhanced_for_statement",
+			"throw_statement", "try_statement", "assert_statement",
+			"switch_expression", "yield_statement":
+			statements := convertStatement(ctx, child)
+			if statements != nil {
+				body = append(body, statements...)
+			}
+		// ignored
+		case "{":
+		case "}":
+		case "line_comment":
+		case "block_comment":
+		default:
+			unhandledChild(ctx, child, "compact_constructor_body")
 		}
 	})
 	return body
