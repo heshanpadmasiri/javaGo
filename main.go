@@ -44,6 +44,11 @@ type ModuleVar struct {
 
 func (v *ModuleVar) ToSource() string {
 	if v.value != nil {
+		// If name is "_" and both type and value are present, include type annotation (needed for type assertions)
+		// Otherwise, use type inference (existing behavior for regular vars)
+		if v.name == "_" && v.ty != "" {
+			return fmt.Sprintf("var %s %s = %s", v.name, v.ty.ToSource(), v.value.ToSource())
+		}
 		return fmt.Sprintf("var %s = %s", v.name, v.value.ToSource())
 	}
 	return fmt.Sprintf("var %s %s", v.name, v.ty.ToSource())
@@ -730,7 +735,12 @@ type ArrayLiteral struct {
 
 func (e *ArrayLiteral) ToSource() string {
 	sb := strings.Builder{}
-	sb.WriteString(e.elementType.ToSource())
+	// Ensure elementType has [] prefix for slice literals
+	elementTypeStr := e.elementType.ToSource()
+	if !strings.HasPrefix(elementTypeStr, "[]") {
+		sb.WriteString("[]")
+	}
+	sb.WriteString(elementTypeStr)
 	sb.WriteString("{")
 	for i, elem := range e.elements {
 		if i > 0 {
@@ -786,6 +796,8 @@ func migrateNode(ctx *MigrationContext, node *tree_sitter.Node) {
 		})
 	case "class_declaration":
 		migrateClassDeclaration(ctx, node)
+	case "interface_declaration":
+		migrateInterfaceDeclaration(ctx, node)
 	// Ignored
 	case "block_comment":
 	case "line_comment":
@@ -800,6 +812,7 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 	var className string
 	var modifiers modifiers
 	var includes []Type
+	var implementedInterfaces []Type
 	isAbstract := false
 	iterateChilden(classNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
@@ -815,6 +828,19 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 			} else {
 				unhandledChild(ctx, child, "superclass")
 			}
+		case "super_interfaces":
+			// Parse implements clause - iterate through children to find type_list
+			iterateChilden(child, func(superinterfacesChild *tree_sitter.Node) {
+				if superinterfacesChild.Kind() == "type_list" {
+					// Iterate through the type_list to get individual types
+					iterateChilden(superinterfacesChild, func(typeChild *tree_sitter.Node) {
+						ty, ok := tryParseType(ctx, typeChild)
+						if ok {
+							implementedInterfaces = append(implementedInterfaces, ty)
+						}
+					})
+				}
+			})
 		case "class_body":
 			if isAbstract {
 				ctx.abstractClasses[className] = true
@@ -866,6 +892,15 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 					public:   extendsAbstract || (modifiers&PUBLIC != 0),
 					includes: embeddedTypes,
 				})
+				// Generate type assertions for implemented interfaces
+				for _, ifaceType := range implementedInterfaces {
+					// Create type assertion: var _ InterfaceName = StructName{}
+					ctx.source.vars = append(ctx.source.vars, ModuleVar{
+						name:  "_",
+						ty:    ifaceType,
+						value: &VarRef{ref: structName + "{}"},
+					})
+				}
 			}
 		// ignored
 		case "class":
@@ -875,6 +910,239 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 			unhandledChild(ctx, child, "class_declaration")
 		}
 	})
+}
+
+func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitter.Node) {
+	var interfaceName string
+	var superInterfaces []Type
+	var regularMethods []InterfaceMethod
+	var defaultMethods []Function
+	var staticMethods []Function
+
+	iterateChilden(interfaceNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "modifiers":
+			// Interfaces are always public, so we don't need to parse modifiers
+		case "identifier":
+			interfaceName = child.Utf8Text(ctx.javaSource)
+		case "extends_interfaces":
+			// Parse extends clause - iterate through children to find type_list
+			iterateChilden(child, func(extendsChild *tree_sitter.Node) {
+				if extendsChild.Kind() == "type_list" {
+					// Iterate through the type_list to get individual types
+					iterateChilden(extendsChild, func(typeChild *tree_sitter.Node) {
+						ty, ok := tryParseType(ctx, typeChild)
+						if ok {
+							superInterfaces = append(superInterfaces, ty)
+						}
+					})
+				}
+			})
+		case "interface_body":
+			// Parse methods in interface body
+			iterateChilden(child, func(bodyChild *tree_sitter.Node) {
+				switch bodyChild.Kind() {
+				case "method_declaration":
+					isDefault := hasModifier(ctx, bodyChild, "default")
+					isStatic := hasModifier(ctx, bodyChild, "static")
+
+					if isDefault {
+						// Default method - convert to standalone function with 'this' parameter
+						function := convertMethodDeclarationToFunction(ctx, bodyChild, true, interfaceName)
+						defaultMethods = append(defaultMethods, function)
+					} else if isStatic {
+						// Static method - convert to package-level function
+						function := convertMethodDeclarationToFunction(ctx, bodyChild, false, "")
+						staticMethods = append(staticMethods, function)
+					} else {
+						// Regular method - add to interface
+						method := extractInterfaceMethodSignature(ctx, bodyChild)
+						regularMethods = append(regularMethods, method)
+					}
+				// ignored
+				case "{":
+				case "}":
+				case ";":
+				case "line_comment":
+				case "block_comment":
+				default:
+					unhandledChild(ctx, bodyChild, "interface_body")
+				}
+			})
+		// ignored
+		case "interface":
+		case "line_comment":
+		case "block_comment":
+		default:
+			unhandledChild(ctx, child, "interface_declaration")
+		}
+	})
+
+	// Generate Go interface with regular methods
+	goInterface := Interface{
+		name:     capitalizeFirstLetter(interfaceName),
+		embeds:   superInterfaces,
+		methods:  regularMethods,
+		public:   true, // Java interfaces are always public
+		comments: []string{},
+	}
+	ctx.source.interfaces = append(ctx.source.interfaces, goInterface)
+
+	// Generate standalone functions for default methods
+	for _, defaultMethod := range defaultMethods {
+		ctx.source.functions = append(ctx.source.functions, defaultMethod)
+	}
+
+	// Generate package-level functions for static methods
+	for _, staticMethod := range staticMethods {
+		ctx.source.functions = append(ctx.source.functions, staticMethod)
+	}
+}
+
+func hasModifier(ctx *MigrationContext, methodNode *tree_sitter.Node, modifier string) bool {
+	hasModifier := false
+	iterateChilden(methodNode, func(child *tree_sitter.Node) {
+		if child.Kind() == "modifiers" {
+			modText := child.Utf8Text(ctx.javaSource)
+			if strings.Contains(modText, modifier) {
+				hasModifier = true
+			}
+		}
+	})
+	return hasModifier
+}
+
+func extractInterfaceMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) InterfaceMethod {
+	var name string
+	var params []Param
+	var returnType *Type
+	var hasThrows bool
+
+	iterateChilden(methodNode, func(child *tree_sitter.Node) {
+		ty, isType := tryParseType(ctx, child)
+		if isType {
+			returnType = &ty
+			return
+		}
+		switch child.Kind() {
+		case "identifier":
+			name = child.Utf8Text(ctx.javaSource)
+		case "formal_parameters":
+			params = convertFormalParameters(ctx, child)
+		case "void_type":
+			returnType = nil
+		case "throws":
+			hasThrows = true
+		// ignored
+		case "modifiers":
+		case ";":
+		case "line_comment":
+		case "block_comment":
+		default:
+			unhandledChild(ctx, child, "interface_method_signature")
+		}
+	})
+
+	// Handle throws clause - convert to error return
+	if hasThrows {
+		if returnType == nil {
+			// void method with exception -> error
+			errorType := Type("error")
+			returnType = &errorType
+		} else {
+			// non-void method with exception -> (T, error)
+			tupleType := Type("(" + returnType.ToSource() + ", error)")
+			returnType = &tupleType
+		}
+	}
+
+	return InterfaceMethod{
+		name:       capitalizeFirstLetter(name),
+		params:     params,
+		returnType: returnType,
+		public:     true, // All interface methods are public
+	}
+}
+
+func convertMethodDeclarationToFunction(ctx *MigrationContext, methodNode *tree_sitter.Node, isDefault bool, interfaceName string) Function {
+	var name string
+	var params []Param
+	var body []Statement
+	var returnType *Type
+	var hasThrows bool
+
+	iterateChilden(methodNode, func(child *tree_sitter.Node) {
+		ty, isType := tryParseType(ctx, child)
+		if isType {
+			returnType = &ty
+			return
+		}
+		switch child.Kind() {
+		case "identifier":
+			name = child.Utf8Text(ctx.javaSource)
+		case "formal_parameters":
+			params = convertFormalParameters(ctx, child)
+		case "void_type":
+			returnType = nil
+		case "block":
+			// For default methods, we need to convert the body to capitalize method calls
+			if isDefault {
+				// Set context for default method conversion
+				oldInDefaultMethod := ctx.inDefaultMethod
+				oldDefaultMethodSelf := ctx.defaultMethodSelf
+				ctx.inDefaultMethod = true
+				ctx.defaultMethodSelf = "this"
+
+				// Convert block with empty field map (interfaces have no fields)
+				rawBody := convertStatementBlock(ctx, child)
+				for _, stmt := range rawBody {
+					body = append(body, convertStatementForDefaultMethod(ctx, stmt, interfaceName, make(map[string]bool)))
+				}
+
+				// Restore context
+				ctx.inDefaultMethod = oldInDefaultMethod
+				ctx.defaultMethodSelf = oldDefaultMethodSelf
+			} else {
+				body = append(body, convertStatementBlock(ctx, child)...)
+			}
+		case "throws":
+			hasThrows = true
+		// ignored
+		case "modifiers":
+		case "line_comment":
+		case "block_comment":
+		default:
+			unhandledChild(ctx, child, "interface_default_method")
+		}
+	})
+
+	// Handle throws clause
+	if hasThrows {
+		if returnType == nil {
+			errorType := Type("error")
+			returnType = &errorType
+		} else {
+			tupleType := Type("(" + returnType.ToSource() + ", error)")
+			returnType = &tupleType
+		}
+	}
+
+	// If default method, prepend 'this' parameter
+	if isDefault {
+		thisParam := Param{
+			name: "this",
+			ty:   Type(capitalizeFirstLetter(interfaceName)),
+		}
+		params = append([]Param{thisParam}, params...)
+	}
+
+	return Function{
+		name:       capitalizeFirstLetter(name),
+		params:     params,
+		returnType: returnType,
+		body:       body,
+		public:     true,
+	}
 }
 
 func convertAbstractClass(ctx *MigrationContext, className string, modifiers modifiers, includes []Type, classBody *tree_sitter.Node) {
@@ -1155,6 +1423,15 @@ func convertStatementForDefaultMethod(ctx *MigrationContext, stmt Statement, cla
 		return &CallStatement{
 			exp: convertExpressionForDefaultMethod(ctx, s.exp, className, fieldMap),
 		}
+	case *VarDeclaration:
+		if s.value != nil {
+			return &VarDeclaration{
+				name:  s.name,
+				ty:    s.ty,
+				value: convertExpressionForDefaultMethod(ctx, s.value, className, fieldMap),
+			}
+		}
+		return s
 	default:
 		// For other statement types, try to convert recursively if possible
 		return stmt
@@ -1574,21 +1851,91 @@ func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []State
 		iterateChilden(stmtNode, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case "assignment_expression":
+				// Check for compound assignment operators
 				refNode := child.ChildByFieldName("left")
-				ref := VarRef{ref: refNode.Utf8Text(ctx.javaSource)}
 				valueNode := child.ChildByFieldName("right")
-				valueExp, initStmts := convertExpression(ctx, valueNode)
-				if len(initStmts) > 0 {
-					Fatal(valueNode.ToSexp(), errors.New("unexpected statements in assignment expression"))
-				}
-				body = append(body, &AssignStatement{
-					ref:   ref,
-					value: valueExp,
+
+				var operator string
+				iterateChilden(child, func(grandChild *tree_sitter.Node) {
+					switch grandChild.Kind() {
+					case "|=", "&=", "^=", "<<=", ">>=", "+=", "-=", "*=", "/=", "%=":
+						operator = grandChild.Utf8Text(ctx.javaSource)
+					}
 				})
+
+				if operator != "" {
+					// Compound assignment: x op= y -> x = x op y
+					leftExp, leftInit := convertExpression(ctx, refNode)
+					rightExp, rightInit := convertExpression(ctx, valueNode)
+					body = append(body, leftInit...)
+					body = append(body, rightInit...)
+
+					// Extract the base operator (remove =)
+					baseOp := operator[:len(operator)-1]
+
+					// Convert >>>= to >>= (Go doesn't have >>>)
+					if baseOp == ">>>" {
+						baseOp = ">>"
+					}
+
+					// Create: x = (x op y)
+					body = append(body, &AssignStatement{
+						ref: VarRef{ref: leftExp.ToSource()},
+						value: &BinaryExpression{
+							left:     leftExp,
+							operator: baseOp,
+							right:    rightExp,
+						},
+					})
+				} else {
+					// Regular assignment
+					ref := VarRef{ref: refNode.Utf8Text(ctx.javaSource)}
+					valueExp, initStmts := convertExpression(ctx, valueNode)
+					if len(initStmts) > 0 {
+						Fatal(valueNode.ToSexp(), errors.New("unexpected statements in assignment expression"))
+					}
+					body = append(body, &AssignStatement{
+						ref:   ref,
+						value: valueExp,
+					})
+				}
 			case "method_invocation":
-				callExperession, initStmts := convertExpression(ctx, child)
-				body = append(body, initStmts...)
-				body = append(body, &CallStatement{exp: callExperession})
+				// Check if this is a .add() call that should be converted to append
+				methodName := child.ChildByFieldName("name").Utf8Text(ctx.javaSource)
+				objectNode := child.ChildByFieldName("object")
+
+				if methodName == "add" && objectNode != nil {
+					// Convert list.add(item) to list = append(list, item)
+					objectText := objectNode.Utf8Text(ctx.javaSource)
+					argsNode := child.ChildByFieldName("arguments")
+					if argsNode != nil {
+						args := convertArgumentList(ctx, argsNode)
+						if len(args) > 0 {
+							// Create: list = append(list, item)
+							body = append(body, &AssignStatement{
+								ref: VarRef{ref: objectText},
+								value: &CallExpression{
+									function: "append",
+									args:     append([]Expression{&VarRef{ref: objectText}}, args...),
+								},
+							})
+						} else {
+							// Fall through to regular method call handling
+							callExperession, initStmts := convertExpression(ctx, child)
+							body = append(body, initStmts...)
+							body = append(body, &CallStatement{exp: callExperession})
+						}
+					} else {
+						// Fall through to regular method call handling
+						callExperession, initStmts := convertExpression(ctx, child)
+						body = append(body, initStmts...)
+						body = append(body, &CallStatement{exp: callExperession})
+					}
+				} else {
+					callExperession, initStmts := convertExpression(ctx, child)
+					body = append(body, initStmts...)
+					body = append(body, &CallStatement{exp: callExperession})
+				}
 			// ignored
 			case ";":
 			default:
@@ -1917,11 +2264,56 @@ func tryGetChildByFieldName(node *tree_sitter.Node, fieldName string) *tree_sitt
 
 func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Expression, []Statement) {
 	switch expression.Kind() {
+	case "this":
+		return &GoExpression{source: "this"}, nil
 	case "assignment_expression":
-		// TODO: do better
-		return &GoExpression{
-			source: expression.Utf8Text(ctx.javaSource),
-		}, nil
+		// Check for compound assignment operators
+		leftNode := expression.ChildByFieldName("left")
+		rightNode := expression.ChildByFieldName("right")
+
+		// Check if this is a compound assignment by looking for operators like |=, &=, etc.
+		var operator string
+		iterateChilden(expression, func(child *tree_sitter.Node) {
+			switch child.Kind() {
+			case "|=", "&=", "^=", "<<=", ">>=", "+=", "-=", "*=", "/=", "%=":
+				operator = child.Utf8Text(ctx.javaSource)
+			}
+		})
+
+		if operator != "" {
+			// This is a compound assignment: x op= y -> x = x op y
+			leftExp, leftInit := convertExpression(ctx, leftNode)
+			rightExp, rightInit := convertExpression(ctx, rightNode)
+
+			// Extract the base operator (remove =)
+			baseOp := operator[:len(operator)-1]
+
+			// Convert >>>= to >>= (Go doesn't have >>>)
+			if baseOp == ">>>" {
+				baseOp = ">>"
+			}
+
+			// Create: left = (left op right)
+			result := &BinaryExpression{
+				left:     leftExp,
+				operator: "=",
+				right: &BinaryExpression{
+					left:     leftExp,
+					operator: baseOp,
+					right:    rightExp,
+				},
+			}
+			return result, append(leftInit, rightInit...)
+		}
+
+		// Regular assignment
+		leftExp, leftInit := convertExpression(ctx, leftNode)
+		rightExp, rightInit := convertExpression(ctx, rightNode)
+		return &BinaryExpression{
+			left:     leftExp,
+			operator: "=",
+			right:    rightExp,
+		}, append(leftInit, rightInit...)
 	case "ternary_expression":
 		// TODO: do better
 		return &GoExpression{
@@ -1986,10 +2378,34 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 			Fatal(expression.ToSexp(), errors.New("unable to parse type in object_creation_expression"))
 		}
 		if ty.isArray() {
-			return &GoStatement{
+			return &GoExpression{
 				source: fmt.Sprintf("make(%s, 0)", ty),
 			}, nil
 		}
+
+		// Check for ArrayList creation: new ArrayList<>() or new ArrayList<Type>()
+		typeText := expression.ChildByFieldName("type").Utf8Text(ctx.javaSource)
+		if strings.HasPrefix(typeText, "ArrayList") {
+			// Extract element type from generic if present: ArrayList<Type> -> Type
+			// For now, use interface{} as default
+			elementType := "interface{}"
+
+			// Try to find type arguments
+			typeArgsNode := expression.ChildByFieldName("type").ChildByFieldName("type_arguments")
+			if typeArgsNode != nil {
+				iterateChilden(typeArgsNode, func(child *tree_sitter.Node) {
+					if child.Kind() == "type_identifier" {
+						elementType = child.Utf8Text(ctx.javaSource)
+					}
+				})
+			}
+
+			// Convert to Go slice: make([]Type, 0)
+			return &GoExpression{
+				source: fmt.Sprintf("make([]%s, 0)", elementType),
+			}, nil
+		}
+
 		// TODO: properly initialize objects here
 		return &NIL, nil
 	case "field_access":
@@ -2020,11 +2436,60 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		}, nil
 	case "method_invocation":
 		name := expression.ChildByFieldName("name").Utf8Text(ctx.javaSource)
+		objectNode := expression.ChildByFieldName("object")
+		objectText := ""
+		if objectNode != nil {
+			objectText = objectNode.Utf8Text(ctx.javaSource)
+		}
+
 		switch name {
 		case "size":
-			object := expression.ChildByFieldName("object").Utf8Text(ctx.javaSource)
 			return &GoExpression{
-				source: fmt.Sprintf("len(%s)", object),
+				source: fmt.Sprintf("len(%s)", objectText),
+			}, nil
+		case "asList":
+			// Arrays.asList(...) -> []Type{...}
+			// Only handle if object is "Arrays"
+			if objectText == "Arrays" {
+				argsNode := expression.ChildByFieldName("arguments")
+				if argsNode != nil {
+					args := convertArgumentList(ctx, argsNode)
+					if len(args) > 0 {
+						// Convert arguments to slice literal
+						// Use interface{} as element type (could be improved with type inference)
+						return &ArrayLiteral{
+							elementType: Type("interface{}"),
+							elements:    args,
+						}, nil
+					}
+				}
+				return &GoExpression{
+					source: "[]interface{}{}",
+				}, nil
+			}
+		case "toArray":
+			// list.toArray(Type[]::new) -> convert to slice
+			// The method reference is already handled, so this should work
+			// For now, return the object as a slice (assuming it's already a slice)
+			return &GoExpression{
+				source: objectText,
+			}, nil
+		case "add":
+			// list.add(item) -> list = append(list, item)
+			// This needs to be handled as a statement, not an expression
+			// For now, return as Go expression that can be used in statements
+			argsNode := expression.ChildByFieldName("arguments")
+			if argsNode != nil {
+				args := convertArgumentList(ctx, argsNode)
+				if len(args) > 0 {
+					// Return: append(list, item)
+					return &GoExpression{
+						source: fmt.Sprintf("append(%s, %s)", objectText, args[0].ToSource()),
+					}, nil
+				}
+			}
+			return &GoExpression{
+				source: SELF_REF + "." + expression.Utf8Text(ctx.javaSource),
 			}, nil
 		default:
 			// TODO: fix casts
@@ -2053,6 +2518,16 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		iterateChilden(expression, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case "||", "&&", "==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%":
+				operator = child.Utf8Text(ctx.javaSource)
+			case "<<", ">>", ">>>":
+				// Bit shift operators
+				operator = child.Utf8Text(ctx.javaSource)
+				// Go uses >> for both signed and unsigned right shift
+				if operator == ">>>" {
+					operator = ">>"
+				}
+			case "|", "&", "^":
+				// Bitwise operators
 				operator = child.Utf8Text(ctx.javaSource)
 			}
 		})
@@ -2123,6 +2598,31 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 			ty:    ty,
 			value: valueExp,
 		}, initStmts
+	case "method_reference":
+		// Handle method references like Type[]::new
+		// This is typically used for array constructors: Type[]::new -> make([]Type, 0)
+		objectNode := expression.ChildByFieldName("object")
+		methodNode := expression.ChildByFieldName("method")
+
+		if objectNode != nil && methodNode != nil {
+			objectText := objectNode.Utf8Text(ctx.javaSource)
+			methodText := methodNode.Utf8Text(ctx.javaSource)
+
+			// Check if this is an array constructor: Type[]::new
+			if methodText == "new" && strings.HasSuffix(objectText, "[]") {
+				// Extract the element type
+				elementType := strings.TrimSuffix(objectText, "[]")
+				// Convert to Go: make([]Type, 0)
+				return &GoExpression{
+					source: fmt.Sprintf("make([]%s, 0)", elementType),
+				}, nil
+			}
+		}
+
+		// Fallback: return as-is (may need more sophisticated handling)
+		return &GoExpression{
+			source: expression.Utf8Text(ctx.javaSource),
+		}, nil
 	default:
 		fmt.Println(expression.Utf8Text(ctx.javaSource))
 		expression.Parent()
