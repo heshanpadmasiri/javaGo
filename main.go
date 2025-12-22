@@ -18,22 +18,62 @@ const (
 )
 
 type MigrationContext struct {
-	source         GoSource
-	javaSource     []byte
-	inReturn       bool
-	abstractClasses map[string]bool
-	inDefaultMethod  bool
+	source            GoSource
+	javaSource        []byte
+	inReturn          bool
+	abstractClasses   map[string]bool
+	inDefaultMethod   bool
 	defaultMethodSelf string
+	enumConstants     map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
 }
 
-// TODO: add constants and vars
 type GoSource struct {
-	imports   []Import
-	interfaces []Interface
-	structs   []Struct
-	vars      []ModuleVar
-	functions []Function
-	methods   []Method
+	imports     []Import
+	interfaces  []Interface
+	structs     []Struct
+	constants   []ModuleConst
+	constBlocks []ConstBlock
+	vars        []ModuleVar
+	functions   []Function
+	methods     []Method
+}
+
+type ModuleConst struct {
+	name  string
+	ty    Type
+	value Expression
+}
+
+func (c *ModuleConst) ToSource() string {
+	if c.value != nil {
+		return fmt.Sprintf("const %s %s = %s", c.name, c.ty.ToSource(), c.value.ToSource())
+	}
+	if c.ty != "" {
+		return fmt.Sprintf("const %s %s", c.name, c.ty.ToSource())
+	}
+	return fmt.Sprintf("const %s", c.name)
+}
+
+type ConstBlock struct {
+	typeName  string
+	constants []string
+}
+
+func (cb *ConstBlock) ToSource() string {
+	if len(cb.constants) == 0 {
+		return ""
+	}
+	sb := strings.Builder{}
+	sb.WriteString("const (\n")
+	for i, constName := range cb.constants {
+		if i == 0 {
+			sb.WriteString(fmt.Sprintf("    %s %s = iota\n", constName, cb.typeName))
+		} else {
+			sb.WriteString(fmt.Sprintf("    %s\n", constName))
+		}
+	}
+	sb.WriteString(")\n")
+	return sb.String()
 }
 
 type ModuleVar struct {
@@ -76,6 +116,14 @@ func (s *GoSource) ToSource() string {
 		sb.WriteString(strct.ToSource())
 		sb.WriteString("\n")
 	}
+	for _, cb := range s.constBlocks {
+		sb.WriteString(cb.ToSource())
+		sb.WriteString("\n")
+	}
+	for _, c := range s.constants {
+		sb.WriteString(c.ToSource())
+		sb.WriteString("\n")
+	}
 	for _, v := range s.vars {
 		sb.WriteString(v.ToSource())
 		sb.WriteString("\n")
@@ -104,11 +152,11 @@ func (imp *Import) ToSource() string {
 }
 
 type Interface struct {
-	name       string
-	embeds     []Type
-	methods    []InterfaceMethod
-	public     bool
-	comments   []string
+	name     string
+	embeds   []Type
+	methods  []InterfaceMethod
+	public   bool
+	comments []string
 }
 
 type InterfaceMethod struct {
@@ -168,6 +216,24 @@ func addComments(sb *strings.Builder, comments []string) {
 
 func (s *Struct) ToSource() string {
 	sb := strings.Builder{}
+	// Check if this is a type alias (empty fields and comment starting with "type")
+	if len(s.fields) == 0 && len(s.includes) == 0 && len(s.comments) > 0 {
+		// Check if first comment is a type alias declaration
+		firstComment := strings.TrimSpace(s.comments[0])
+		if strings.HasPrefix(firstComment, "type ") {
+			// Output as type alias (skip the comment, output directly)
+			sb.WriteString("type ")
+			sb.WriteString(toIdentifier(s.name, s.public))
+			// Extract the type from comment: "type EnumName int" -> "int"
+			parts := strings.Fields(firstComment)
+			if len(parts) >= 3 {
+				sb.WriteString(" ")
+				sb.WriteString(parts[2])
+			}
+			sb.WriteString("\n")
+			return sb.String()
+		}
+	}
 	addComments(&sb, s.comments)
 	sb.WriteString("type ")
 	sb.WriteString(toIdentifier(s.name, s.public))
@@ -772,6 +838,7 @@ func main() {
 	ctx := &MigrationContext{
 		javaSource:      javaSource,
 		abstractClasses: make(map[string]bool),
+		enumConstants:   make(map[string]string),
 	}
 	migrateTree(ctx, tree)
 	goSource := ctx.source.ToSource()
@@ -800,6 +867,8 @@ func migrateNode(ctx *MigrationContext, node *tree_sitter.Node) {
 		migrateRecordDeclaration(ctx, node)
 	case "interface_declaration":
 		migrateInterfaceDeclaration(ctx, node)
+	case "enum_declaration":
+		migrateEnumDeclaration(ctx, node)
 	// Ignored
 	case "block_comment":
 	case "line_comment":
@@ -1069,6 +1138,8 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 					migrateClassDeclaration(ctx, bodyChild)
 				case "record_declaration":
 					migrateRecordDeclaration(ctx, bodyChild)
+				case "enum_declaration":
+					migrateEnumDeclaration(ctx, bodyChild)
 				case "method_declaration":
 					isDefault := hasModifier(ctx, bodyChild, "default")
 					isStatic := hasModifier(ctx, bodyChild, "static")
@@ -1123,6 +1194,373 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 	// Generate package-level functions for static methods
 	for _, staticMethod := range staticMethods {
 		ctx.source.functions = append(ctx.source.functions, staticMethod)
+	}
+}
+
+type EnumConstant struct {
+	name      string
+	arguments []Expression
+}
+
+func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
+	var enumName string
+	var modifiers modifiers
+	var enumConstants []EnumConstant
+	var enumBody *tree_sitter.Node
+	var hasFields bool
+
+	iterateChilden(enumNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "modifiers":
+			modifiers = parseModifiers(child.Utf8Text(ctx.javaSource))
+		case "identifier":
+			enumName = child.Utf8Text(ctx.javaSource)
+		case "enum_constants":
+			// Parse enum constants list
+			iterateChilden(child, func(constantChild *tree_sitter.Node) {
+				if constantChild.Kind() == "enum_constant" {
+					// Extract constant name
+					constantNameNode := constantChild.ChildByFieldName("name")
+					if constantNameNode != nil {
+						constantName := constantNameNode.Utf8Text(ctx.javaSource)
+						// Parse constructor arguments if present
+						var args []Expression
+						argsNode := constantChild.ChildByFieldName("arguments")
+						if argsNode != nil {
+							args = convertArgumentList(ctx, argsNode)
+						}
+						enumConstants = append(enumConstants, EnumConstant{
+							name:      constantName,
+							arguments: args,
+						})
+					}
+				} else if constantChild.Kind() == "identifier" {
+					// Might be a constant name directly
+					constantName := constantChild.Utf8Text(ctx.javaSource)
+					enumConstants = append(enumConstants, EnumConstant{
+						name:      constantName,
+						arguments: []Expression{},
+					})
+				}
+			})
+		case "enum_constant":
+			// Handle enum constant as direct child (fallback)
+			constantNameNode := child.ChildByFieldName("name")
+			if constantNameNode != nil {
+				constantName := constantNameNode.Utf8Text(ctx.javaSource)
+				var args []Expression
+				argsNode := child.ChildByFieldName("arguments")
+				if argsNode != nil {
+					args = convertArgumentList(ctx, argsNode)
+				}
+				enumConstants = append(enumConstants, EnumConstant{
+					name:      constantName,
+					arguments: args,
+				})
+			} else {
+				// Try to get name from identifier child
+				iterateChilden(child, func(constantChild *tree_sitter.Node) {
+					if constantChild.Kind() == "identifier" {
+						constantName := constantChild.Utf8Text(ctx.javaSource)
+						enumConstants = append(enumConstants, EnumConstant{
+							name:      constantName,
+							arguments: []Expression{},
+						})
+					}
+				})
+			}
+		case "enum_body":
+			enumBody = child
+			// Parse constants and check for fields in the body
+			iterateChilden(child, func(bodyChild *tree_sitter.Node) {
+				if bodyChild.Kind() == "field_declaration" {
+					hasFields = true
+				} else if bodyChild.Kind() == "enum_constant" {
+					// Constants might be in the body
+					constantNameNode := bodyChild.ChildByFieldName("name")
+					if constantNameNode != nil {
+						constantName := constantNameNode.Utf8Text(ctx.javaSource)
+						var args []Expression
+						argsNode := bodyChild.ChildByFieldName("arguments")
+						if argsNode != nil {
+							args = convertArgumentList(ctx, argsNode)
+						}
+						enumConstants = append(enumConstants, EnumConstant{
+							name:      constantName,
+							arguments: args,
+						})
+					}
+				} else if bodyChild.Kind() == "identifier" && len(enumConstants) == 0 {
+					// Might be a constant name if we haven't found any constants yet
+					constantName := bodyChild.Utf8Text(ctx.javaSource)
+					enumConstants = append(enumConstants, EnumConstant{
+						name:      constantName,
+						arguments: []Expression{},
+					})
+				}
+				// Also check nested nodes for field_declaration (in case of nested structures)
+				iterateChilden(bodyChild, func(nestedChild *tree_sitter.Node) {
+					if nestedChild.Kind() == "field_declaration" {
+						hasFields = true
+					}
+				})
+			})
+		case "class_body":
+			// Enum body might be represented as class_body
+			if enumBody == nil {
+				enumBody = child
+				// Parse constants and check for fields in the body
+				iterateChilden(child, func(bodyChild *tree_sitter.Node) {
+					if bodyChild.Kind() == "field_declaration" {
+						hasFields = true
+					} else if bodyChild.Kind() == "enum_constant" {
+						constantNameNode := bodyChild.ChildByFieldName("name")
+						if constantNameNode != nil {
+							constantName := constantNameNode.Utf8Text(ctx.javaSource)
+							var args []Expression
+							argsNode := bodyChild.ChildByFieldName("arguments")
+							if argsNode != nil {
+								args = convertArgumentList(ctx, argsNode)
+							}
+							enumConstants = append(enumConstants, EnumConstant{
+								name:      constantName,
+								arguments: args,
+							})
+						}
+					}
+				})
+			}
+		case "block":
+			// Enum body might be a block
+			if enumBody == nil {
+				enumBody = child
+				// Parse constants and check for fields in the body
+				iterateChilden(child, func(bodyChild *tree_sitter.Node) {
+					if bodyChild.Kind() == "field_declaration" {
+						hasFields = true
+					} else if bodyChild.Kind() == "enum_constant" {
+						constantNameNode := bodyChild.ChildByFieldName("name")
+						if constantNameNode != nil {
+							constantName := constantNameNode.Utf8Text(ctx.javaSource)
+							var args []Expression
+							argsNode := bodyChild.ChildByFieldName("arguments")
+							if argsNode != nil {
+								args = convertArgumentList(ctx, argsNode)
+							}
+							enumConstants = append(enumConstants, EnumConstant{
+								name:      constantName,
+								arguments: args,
+							})
+						}
+					}
+				})
+			}
+		// ignored
+		case "enum":
+		case "line_comment":
+		case "block_comment":
+		case ",":
+			// Ignore commas in enum constant list
+		case ";":
+			// Ignore semicolons (separator between constants and body)
+		case "{":
+			// Opening brace - might contain enum body
+		case "}":
+			// Closing brace
+		default:
+			unhandledChild(ctx, child, "enum_declaration")
+		}
+	})
+
+	// Enums are public by default in Java (unless explicitly private/protected)
+	// If no access modifier is present, default to public
+	isPublic := modifiers.isPublic()
+	hasAccessModifier := (modifiers&PUBLIC != 0) || (modifiers&PRIVATE != 0) || (modifiers&PROTECTED != 0)
+	if !hasAccessModifier {
+		isPublic = true
+	}
+	enumTypeName := toIdentifier(enumName, isPublic)
+
+	// Re-check for fields in enum body if we have one (fields might come after constants)
+	if enumBody != nil && !hasFields {
+		iterateChilden(enumBody, func(bodyChild *tree_sitter.Node) {
+			if bodyChild.Kind() == "field_declaration" {
+				hasFields = true
+			}
+		})
+	}
+
+	// Recalculate enumTypeName with correct public flag if needed
+	if !hasAccessModifier {
+		enumTypeName = toIdentifier(enumName, isPublic)
+	}
+
+	if hasFields {
+		// Complex enum: generate struct and var declarations
+		convertComplexEnum(ctx, enumTypeName, enumConstants, enumBody, modifiers, isPublic)
+	} else {
+		// Simple enum: generate int type and const with iota
+		convertSimpleEnum(ctx, enumTypeName, enumConstants, enumBody, modifiers, isPublic)
+	}
+}
+
+func convertSimpleEnum(ctx *MigrationContext, enumTypeName string, enumConstants []EnumConstant, enumBody *tree_sitter.Node, modifiers modifiers, isPublic bool) {
+	// Generate type declaration: type EnumName int
+	ctx.source.structs = append(ctx.source.structs, Struct{
+		name:     enumTypeName,
+		fields:   []StructField{},
+		comments: []string{fmt.Sprintf("type %s int", enumTypeName)},
+		public:   isPublic,
+		includes: []Type{},
+	})
+
+	// Generate const block with iota
+	if len(enumConstants) > 0 {
+		prefixedConstants := make([]string, len(enumConstants))
+		for i, constant := range enumConstants {
+			prefixedName := enumTypeName + "_" + constant.name
+			prefixedConstants[i] = prefixedName
+			// Track enum constant for later reference conversion
+			ctx.enumConstants[constant.name] = prefixedName
+		}
+		ctx.source.constBlocks = append(ctx.source.constBlocks, ConstBlock{
+			typeName:  enumTypeName,
+			constants: prefixedConstants,
+		})
+	}
+
+	// Parse and convert methods from enum body
+	if enumBody != nil {
+		// Recursively find all method_declaration nodes
+		var findMethods func(node *tree_sitter.Node)
+		findMethods = func(node *tree_sitter.Node) {
+			iterateChilden(node, func(bodyChild *tree_sitter.Node) {
+				switch bodyChild.Kind() {
+				case "method_declaration":
+					// Handle methods similar to class methods
+					function, isStatic := convertMethodDeclaration(ctx, bodyChild)
+					if isStatic {
+						ctx.source.functions = append(ctx.source.functions, function)
+					} else {
+						ctx.source.methods = append(ctx.source.methods, Method{
+							Function: function,
+							receiver: Param{
+								name: SELF_REF,
+								ty:   Type("*" + enumTypeName),
+							},
+						})
+					}
+				case "enum_constant":
+					// Skip enum constants - already parsed
+				case "enum_declaration":
+					// Handle nested enums
+					migrateEnumDeclaration(ctx, bodyChild)
+				default:
+					// Recursively search nested structures
+					findMethods(bodyChild)
+				}
+			})
+		}
+		findMethods(enumBody)
+	}
+}
+
+func convertComplexEnum(ctx *MigrationContext, enumTypeName string, enumConstants []EnumConstant, enumBody *tree_sitter.Node, modifiers modifiers, isPublic bool) {
+	// First, track enum constants so they can be referenced in method bodies
+	for _, constant := range enumConstants {
+		prefixedName := enumTypeName + "_" + constant.name
+		// Track enum constant for later reference conversion
+		ctx.enumConstants[constant.name] = prefixedName
+	}
+
+	// Parse fields from enum body
+	var fields []StructField
+
+	// Recursively find all field_declaration and method_declaration nodes
+	var findFieldsAndMethods func(node *tree_sitter.Node)
+	findFieldsAndMethods = func(node *tree_sitter.Node) {
+		iterateChilden(node, func(child *tree_sitter.Node) {
+			switch child.Kind() {
+			case "field_declaration":
+				field, _, _ := convertFieldDeclaration(ctx, child)
+				fields = append(fields, field)
+			case "method_declaration":
+				// Handle methods similar to class methods
+				function, isStatic := convertMethodDeclaration(ctx, child)
+				if isStatic {
+					ctx.source.functions = append(ctx.source.functions, function)
+				} else {
+					ctx.source.methods = append(ctx.source.methods, Method{
+						Function: function,
+						receiver: Param{
+							name: SELF_REF,
+							ty:   Type("*" + enumTypeName),
+						},
+					})
+				}
+			case "constructor_declaration":
+				// Enum constructors are private and used for initialization
+				// We'll handle them in the var declarations
+			case "enum_constant":
+				// Skip enum constants - already parsed
+			case "enum_declaration":
+				// Handle nested enums
+				migrateEnumDeclaration(ctx, child)
+			default:
+				// Recursively search nested structures
+				findFieldsAndMethods(child)
+			}
+		})
+	}
+
+	if enumBody != nil {
+		findFieldsAndMethods(enumBody)
+	}
+
+	// Generate struct type
+	ctx.source.structs = append(ctx.source.structs, Struct{
+		name:     enumTypeName,
+		fields:   fields,
+		comments: []string{},
+		public:   isPublic,
+		includes: []Type{},
+	})
+
+	// Generate var declarations for each enum constant
+	// Parse field names to create struct literal
+	fieldNames := make([]string, len(fields))
+	for i, field := range fields {
+		fieldNames[i] = toIdentifier(field.name, field.public)
+	}
+
+	for _, constant := range enumConstants {
+		prefixedName := enumTypeName + "_" + constant.name
+		// Create struct literal with constructor arguments
+		var structLiteral Expression
+		if len(constant.arguments) > 0 && len(constant.arguments) == len(fieldNames) {
+			// Create struct literal with field names and values
+			sb := strings.Builder{}
+			sb.WriteString(enumTypeName)
+			sb.WriteString("{")
+			for i, arg := range constant.arguments {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(fieldNames[i])
+				sb.WriteString(": ")
+				sb.WriteString(arg.ToSource())
+			}
+			sb.WriteString("}")
+			structLiteral = &VarRef{ref: sb.String()}
+		} else {
+			// Empty struct or mismatch - use empty struct
+			structLiteral = &VarRef{ref: enumTypeName + "{}"}
+		}
+		ctx.source.vars = append(ctx.source.vars, ModuleVar{
+			name:  prefixedName,
+			ty:    Type(enumTypeName),
+			value: structLiteral,
+		})
 	}
 }
 
@@ -1286,6 +1724,8 @@ func convertAbstractClass(ctx *MigrationContext, className string, modifiers mod
 			migrateClassDeclaration(ctx, child)
 		case "record_declaration":
 			migrateRecordDeclaration(ctx, child)
+		case "enum_declaration":
+			migrateEnumDeclaration(ctx, child)
 		case "field_declaration":
 			field, initExpr, mods := convertFieldDeclaration(ctx, child)
 			if mods&STATIC != 0 {
@@ -1822,6 +2262,8 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 			migrateClassDeclaration(ctx, child)
 		case "record_declaration":
 			migrateRecordDeclaration(ctx, child)
+		case "enum_declaration":
+			migrateEnumDeclaration(ctx, child)
 		case "field_declaration":
 			field, initExpr, mods := convertFieldDeclaration(ctx, child)
 			// If field is static final, add as module-level var
@@ -1869,7 +2311,7 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 
 // TODO: this is very similar to constructor conversion, refactor
 func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Node) (Function, bool) {
-	fn, _, isStatic := convertMethodDeclarationWithAbstract(ctx, methodNode)
+	fn, isStatic, _ := convertMethodDeclarationWithAbstract(ctx, methodNode)
 	return fn, isStatic
 }
 
@@ -1926,13 +2368,14 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 	if isAbstract && len(body) == 0 {
 		body = append(body, &GoStatement{source: "panic(\"implemented in concrete class\")"})
 	}
+	isStatic := modifiers&STATIC != 0
 	return Function{
 		name:       name,
 		params:     params,
 		returnType: returnType,
 		body:       body,
 		public:     modifiers&PUBLIC != 0,
-	}, modifiers&STATIC != 0, isAbstract
+	}, isStatic, isAbstract
 }
 
 func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) []Statement {
@@ -2635,8 +3078,15 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		switchStatement := convertSwitchStatement(ctx, expression)
 		return &switchStatement, nil
 	case "identifier":
+		identName := expression.Utf8Text(ctx.javaSource)
+		// Check if this is an enum constant reference
+		if prefixedName, ok := ctx.enumConstants[identName]; ok {
+			return &VarRef{
+				ref: prefixedName,
+			}, nil
+		}
 		return &VarRef{
-			ref: expression.Utf8Text(ctx.javaSource),
+			ref: identName,
 		}, nil
 	case "array_access":
 		return &GoExpression{
@@ -2713,6 +3163,20 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 		}
 
 		switch name {
+		case "equals":
+			// String.equals(other) -> string == other
+			argsNode := expression.ChildByFieldName("arguments")
+			if argsNode != nil {
+				args := convertArgumentList(ctx, argsNode)
+				if len(args) > 0 {
+					// Convert: "active".equals(s) -> "active" == s
+					return &BinaryExpression{
+						left:     &VarRef{ref: objectText},
+						operator: "==",
+						right:    args[0],
+					}, nil
+				}
+			}
 		case "size":
 			return &GoExpression{
 				source: fmt.Sprintf("len(%s)", objectText),
@@ -2762,9 +3226,51 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (Exp
 				source: SELF_REF + "." + expression.Utf8Text(ctx.javaSource),
 			}, nil
 		default:
+			// Handle method calls on this or other objects
+			if objectText == "this" || objectText == SELF_REF {
+				// Special handling for Java enum name() method
+				if name == "name" {
+					// this.name() -> this.Name() (will need a Name() method implementation)
+					return &GoExpression{
+						source: fmt.Sprintf("%s.Name()", SELF_REF),
+					}, nil
+				}
+				// Method call on this - just capitalize method name
+				capitalizedName := capitalizeFirstLetter(name)
+				argsNode := expression.ChildByFieldName("arguments")
+				var argsStr string
+				if argsNode != nil {
+					args := convertArgumentList(ctx, argsNode)
+					argStrs := make([]string, len(args))
+					for i, arg := range args {
+						argStrs[i] = arg.ToSource()
+					}
+					argsStr = strings.Join(argStrs, ", ")
+				}
+				return &GoExpression{
+					source: fmt.Sprintf("%s.%s(%s)", SELF_REF, capitalizedName, argsStr),
+				}, nil
+			}
+			// Handle method calls on enum constants
+			if prefixedName, ok := ctx.enumConstants[objectText]; ok {
+				// If objectText is an enum constant, prepend its prefixed name
+				return &GoExpression{
+					source: fmt.Sprintf("%s.%s", prefixedName, capitalizeFirstLetter(name)),
+				}, nil
+			}
 			// TODO: fix casts
+			// Fallback: convert the expression and clean up any this.this patterns
+			exprText := expression.Utf8Text(ctx.javaSource)
+			// If expression already starts with "this.", don't prepend another "this."
+			if strings.HasPrefix(exprText, "this.") {
+				// Clean up any this.this patterns
+				exprText = strings.ReplaceAll(exprText, "this.this.", "this.")
+				return &GoExpression{
+					source: exprText,
+				}, nil
+			}
 			return &GoExpression{
-				source: SELF_REF + "." + expression.Utf8Text(ctx.javaSource),
+				source: SELF_REF + "." + exprText,
 			}, nil
 		}
 	case "return":

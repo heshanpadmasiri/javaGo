@@ -77,6 +77,7 @@ func TestMigration(t *testing.T) {
 			ctx := &MigrationContext{
 				javaSource:      javaContent,
 				abstractClasses: make(map[string]bool),
+				enumConstants:   make(map[string]string),
 			}
 			migrateTree(ctx, tree)
 			result := ctx.source.ToSource()
