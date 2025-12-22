@@ -796,6 +796,8 @@ func migrateNode(ctx *MigrationContext, node *tree_sitter.Node) {
 		})
 	case "class_declaration":
 		migrateClassDeclaration(ctx, node)
+	case "record_declaration":
+		migrateRecordDeclaration(ctx, node)
 	case "interface_declaration":
 		migrateInterfaceDeclaration(ctx, node)
 	// Ignored
@@ -912,6 +914,127 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 	})
 }
 
+func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Node) {
+	var recordName string
+	var modifiers modifiers
+	var fields []StructField
+	var comments []string
+	var implementedInterfaces []Type
+
+	iterateChilden(recordNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "modifiers":
+			modifiers = parseModifiers(child.Utf8Text(ctx.javaSource))
+		case "identifier":
+			recordName = child.Utf8Text(ctx.javaSource)
+		case "super_interfaces":
+			// Parse implements clause - iterate through children to find type_list
+			iterateChilden(child, func(superinterfacesChild *tree_sitter.Node) {
+				if superinterfacesChild.Kind() == "type_list" {
+					// Iterate through the type_list to get individual types
+					iterateChilden(superinterfacesChild, func(typeChild *tree_sitter.Node) {
+						ty, ok := tryParseType(ctx, typeChild)
+						if ok {
+							implementedInterfaces = append(implementedInterfaces, ty)
+						}
+					})
+				}
+			})
+		case "formal_parameters":
+			// Record components are in formal_parameters
+			iterateChilden(child, func(paramChild *tree_sitter.Node) {
+				switch paramChild.Kind() {
+				case "formal_parameter":
+					typeNode := paramChild.ChildByFieldName("type")
+					if typeNode == nil {
+						Fatal(paramChild.ToSexp(), errors.New("formal_parameter missing type field"))
+					}
+					nameNode := paramChild.ChildByFieldName("name")
+					if nameNode == nil {
+						Fatal(paramChild.ToSexp(), errors.New("formal_parameter missing name field"))
+					}
+					ty, ok := tryParseType(ctx, typeNode)
+					if !ok {
+						Fatal(typeNode.ToSexp(), errors.New("unable to parse type in formal_parameter"))
+					}
+					// For record fields, we don't convert arrays to pointers (unlike function parameters)
+					// Record fields should be slices directly
+					fieldName := nameNode.Utf8Text(ctx.javaSource)
+					fields = append(fields, StructField{
+						name:     fieldName,
+						ty:       ty,
+						public:   true, // All record fields must be public
+						comments: []string{},
+					})
+				// ignored
+				case "(":
+				case ")":
+				case ",":
+				case "line_comment":
+				case "block_comment":
+				default:
+					unhandledChild(ctx, paramChild, "record formal_parameters")
+				}
+			})
+		case "class_body":
+			// Handle optional record body with additional methods/fields
+			// Build field name mapping: original component name -> struct field name
+			fieldNameMap := make(map[string]string)
+			for _, field := range fields {
+				originalName := field.name
+				structFieldName := toIdentifier(field.name, true) // Always public for records
+				fieldNameMap[originalName] = structFieldName
+			}
+			result := convertClassBody(ctx, recordName, child, false)
+			// Add any additional fields from the body
+			fields = append(fields, result.fields...)
+			// Add methods with the record as receiver, converting field references
+			structName := toIdentifier(recordName, modifiers.isPublic())
+			for i := range result.methods {
+				method := &result.methods[i]
+				method.receiver = Param{
+					name: SELF_REF,
+					ty:   Type("*" + structName),
+				}
+				// Convert method body to use struct field names
+				method.body = convertMethodBodyForRecord(ctx, method.body, fieldNameMap)
+				ctx.source.methods = append(ctx.source.methods, *method)
+			}
+			// Add any functions (static methods)
+			for _, function := range result.functions {
+				ctx.source.functions = append(ctx.source.functions, function)
+			}
+			// Note: Nested class_declaration and record_declaration are handled by convertClassBody
+		// ignored
+		case "record":
+		case "line_comment":
+		case "block_comment":
+		default:
+			unhandledChild(ctx, child, "record_declaration")
+		}
+	})
+
+	// Create the struct with record components as fields
+	structName := toIdentifier(recordName, modifiers.isPublic())
+	ctx.source.structs = append(ctx.source.structs, Struct{
+		name:     structName,
+		fields:   fields,
+		comments: comments,
+		public:   modifiers&PUBLIC != 0,
+		includes: []Type{}, // Records don't support extends, only implements
+	})
+
+	// Generate type assertions for implemented interfaces
+	for _, ifaceType := range implementedInterfaces {
+		// Create type assertion: var _ InterfaceName = StructName{}
+		ctx.source.vars = append(ctx.source.vars, ModuleVar{
+			name:  "_",
+			ty:    ifaceType,
+			value: &VarRef{ref: structName + "{}"},
+		})
+	}
+}
+
 func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitter.Node) {
 	var interfaceName string
 	var superInterfaces []Type
@@ -942,6 +1065,10 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 			// Parse methods in interface body
 			iterateChilden(child, func(bodyChild *tree_sitter.Node) {
 				switch bodyChild.Kind() {
+				case "class_declaration":
+					migrateClassDeclaration(ctx, bodyChild)
+				case "record_declaration":
+					migrateRecordDeclaration(ctx, bodyChild)
 				case "method_declaration":
 					isDefault := hasModifier(ctx, bodyChild, "default")
 					isStatic := hasModifier(ctx, bodyChild, "static")
@@ -1157,6 +1284,8 @@ func convertAbstractClass(ctx *MigrationContext, className string, modifiers mod
 		switch child.Kind() {
 		case "class_declaration":
 			migrateClassDeclaration(ctx, child)
+		case "record_declaration":
+			migrateRecordDeclaration(ctx, child)
 		case "field_declaration":
 			field, initExpr, mods := convertFieldDeclaration(ctx, child)
 			if mods&STATIC != 0 {
@@ -1459,6 +1588,145 @@ func convertElseIfsForDefaultMethod(ctx *MigrationContext, elseIfs []IfStatement
 	return converted
 }
 
+func convertMethodBodyForRecord(ctx *MigrationContext, body []Statement, fieldNameMap map[string]string) []Statement {
+	var converted []Statement
+	for _, stmt := range body {
+		converted = append(converted, convertStatementForRecord(ctx, stmt, fieldNameMap))
+	}
+	return converted
+}
+
+func convertStatementForRecord(ctx *MigrationContext, stmt Statement, fieldNameMap map[string]string) Statement {
+	switch s := stmt.(type) {
+	case *GoStatement:
+		// Replace bare field references with this.FieldName
+		// GoStatement contains raw source, so we do simple string replacement
+		// This is a simplified approach - in production you'd want AST-based replacement
+		source := s.source
+		// Sort field names by length (longest first) to avoid partial matches
+		type fieldPair struct {
+			original string
+			mapped   string
+		}
+		var fields []fieldPair
+		for originalName, structFieldName := range fieldNameMap {
+			fields = append(fields, fieldPair{original: originalName, mapped: structFieldName})
+		}
+		// Sort by length descending
+		for i := 0; i < len(fields); i++ {
+			for j := i + 1; j < len(fields); j++ {
+				if len(fields[i].original) < len(fields[j].original) {
+					fields[i], fields[j] = fields[j], fields[i]
+				}
+			}
+		}
+		// Replace field references, avoiding replacements that are already part of "this.field"
+		for _, field := range fields {
+			originalName := field.original
+			structFieldName := field.mapped
+			// Only replace if it's not already part of "this.field"
+			// Simple heuristic: replace if not preceded by "this."
+			replacement := SELF_REF + "." + structFieldName
+			// Use word boundary-aware replacement
+			// Replace standalone occurrences (not part of "this.field")
+			beforePattern := SELF_REF + "." + originalName
+			if !strings.Contains(source, beforePattern) {
+				// Replace bare field name with this.FieldName
+				// Be careful: only replace if it's a standalone identifier
+				// Simple approach: replace and then fix if we created "this.this.Field"
+				source = strings.ReplaceAll(source, originalName, replacement)
+				source = strings.ReplaceAll(source, SELF_REF+"."+SELF_REF+".", SELF_REF+".")
+			} else {
+				// Already has "this.field", just capitalize the field name
+				source = strings.ReplaceAll(source, beforePattern, SELF_REF+"."+structFieldName)
+			}
+		}
+		return &GoStatement{source: source}
+	case *ReturnStatement:
+		if s.value != nil {
+			return &ReturnStatement{value: convertExpressionForRecord(ctx, s.value, fieldNameMap)}
+		}
+		return s
+	case *AssignStatement:
+		refExpr := convertExpressionForRecord(ctx, &VarRef{ref: s.ref.ref}, fieldNameMap)
+		var ref VarRef
+		if varRef, ok := refExpr.(*VarRef); ok {
+			ref = *varRef
+		} else {
+			// Fallback: use original ref
+			ref = s.ref
+		}
+		return &AssignStatement{
+			ref:   ref,
+			value: convertExpressionForRecord(ctx, s.value, fieldNameMap),
+		}
+	case *IfStatement:
+		return &IfStatement{
+			condition: convertExpressionForRecord(ctx, s.condition, fieldNameMap),
+			body:      convertMethodBodyForRecord(ctx, s.body, fieldNameMap),
+			elseIf:    convertElseIfsForRecord(ctx, s.elseIf, fieldNameMap),
+			elseStmts: convertMethodBodyForRecord(ctx, s.elseStmts, fieldNameMap),
+		}
+	default:
+		return stmt
+	}
+}
+
+func convertElseIfsForRecord(ctx *MigrationContext, elseIfs []IfStatement, fieldNameMap map[string]string) []IfStatement {
+	var converted []IfStatement
+	for _, elseIf := range elseIfs {
+		converted = append(converted, IfStatement{
+			condition: convertExpressionForRecord(ctx, elseIf.condition, fieldNameMap),
+			body:      convertMethodBodyForRecord(ctx, elseIf.body, fieldNameMap),
+			elseIf:    convertElseIfsForRecord(ctx, elseIf.elseIf, fieldNameMap),
+			elseStmts: convertMethodBodyForRecord(ctx, elseIf.elseStmts, fieldNameMap),
+		})
+	}
+	return converted
+}
+
+func convertExpressionForRecord(ctx *MigrationContext, expr Expression, fieldNameMap map[string]string) Expression {
+	switch e := expr.(type) {
+	case *VarRef:
+		ref := e.ref
+		// Check if this is a bare field reference that needs conversion
+		if structFieldName, ok := fieldNameMap[ref]; ok {
+			// Convert bare field reference to this.FieldName
+			return &VarRef{ref: SELF_REF + "." + structFieldName}
+		}
+		// If it's already this.field, check if the field name needs capitalization
+		if strings.HasPrefix(ref, SELF_REF+".") {
+			fieldName := strings.TrimPrefix(ref, SELF_REF+".")
+			if structFieldName, ok := fieldNameMap[fieldName]; ok {
+				return &VarRef{ref: SELF_REF + "." + structFieldName}
+			}
+		}
+		return e
+	case *BinaryExpression:
+		return &BinaryExpression{
+			left:     convertExpressionForRecord(ctx, e.left, fieldNameMap),
+			operator: e.operator,
+			right:    convertExpressionForRecord(ctx, e.right, fieldNameMap),
+		}
+	case *UnaryExpression:
+		return &UnaryExpression{
+			operator: e.operator,
+			operand:  convertExpressionForRecord(ctx, e.operand, fieldNameMap),
+		}
+	case *CallExpression:
+		var convertedArgs []Expression
+		for _, arg := range e.args {
+			convertedArgs = append(convertedArgs, convertExpressionForRecord(ctx, arg, fieldNameMap))
+		}
+		return &CallExpression{
+			function: e.function,
+			args:     convertedArgs,
+		}
+	default:
+		return expr
+	}
+}
+
 func convertExpressionForDefaultMethod(ctx *MigrationContext, expr Expression, className string, fieldMap map[string]bool) Expression {
 	switch e := expr.(type) {
 	case *VarRef:
@@ -1552,6 +1820,8 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 		switch child.Kind() {
 		case "class_declaration":
 			migrateClassDeclaration(ctx, child)
+		case "record_declaration":
+			migrateRecordDeclaration(ctx, child)
 		case "field_declaration":
 			field, initExpr, mods := convertFieldDeclaration(ctx, child)
 			// If field is static final, add as module-level var
