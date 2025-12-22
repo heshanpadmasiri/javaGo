@@ -1332,6 +1332,7 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 	var body []Statement
 	var name string
 	var returnType *Type
+	var hasThrows bool
 	iterateChilden(methodNode, func(child *tree_sitter.Node) {
 		ty, isType := tryParseType(ctx, child)
 		if isType {
@@ -1349,6 +1350,8 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 			returnType = nil
 		case "block":
 			body = append(body, convertStatementBlock(ctx, child)...)
+		case "throws":
+			hasThrows = true
 		// ignored
 		case ";":
 		case "line_comment":
@@ -1357,6 +1360,20 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 			unhandledChild(ctx, child, "method_declaration")
 		}
 	})
+
+	// Modify return type if method throws exceptions
+	if hasThrows {
+		if returnType == nil {
+			// void method with exception -> error
+			errorType := Type("error")
+			returnType = &errorType
+		} else {
+			// non-void method with exception -> (T, error)
+			tupleType := Type("(" + returnType.ToSource() + ", error)")
+			returnType = &tupleType
+		}
+	}
+
 	isAbstract := modifiers&ABSTRACT != 0 && len(body) == 0
 	// If method is abstract and has no body, add panic statement (for non-abstract class methods)
 	if isAbstract && len(body) == 0 {

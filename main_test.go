@@ -851,3 +851,140 @@ func TestArrayParameterConversion(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckedExceptionTranslation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []string // Strings that must appear in output
+	}{
+		{
+			name: "Void method with single exception",
+			input: `class Test {
+    void foo() throws IOException {
+        System.out.println("test");
+    }
+}`,
+			expected: []string{
+				"func (this *test) foo() error {",
+			},
+		},
+		{
+			name: "Non-void method with single exception",
+			input: `class Test {
+    String foo() throws IOException {
+        return "test";
+    }
+}`,
+			expected: []string{
+				"func (this *test) foo() (string, error) {",
+			},
+		},
+		{
+			name: "Void method with multiple exceptions",
+			input: `class Test {
+    void foo() throws IOException, SQLException {
+        System.out.println("test");
+    }
+}`,
+			expected: []string{
+				"func (this *test) foo() error {",
+			},
+		},
+		{
+			name: "Non-void method with multiple exceptions",
+			input: `class Test {
+    int foo() throws IOException, SQLException {
+        return 42;
+    }
+}`,
+			expected: []string{
+				"func (this *test) foo() (int, error) {",
+			},
+		},
+		{
+			name: "Method without exceptions (control)",
+			input: `class Test {
+    void foo() {
+        System.out.println("test");
+    }
+}`,
+			expected: []string{
+				"func (this *test) foo() {",
+			},
+		},
+		{
+			name: "Abstract method with exception",
+			input: `abstract class Test {
+    public abstract void foo() throws IOException;
+}`,
+			expected: []string{
+				"type Test interface {",
+				"    Foo() error",
+			},
+		},
+		{
+			name: "Non-void abstract method with exception",
+			input: `abstract class Test {
+    public abstract String process() throws IOException;
+}`,
+			expected: []string{
+				"type Test interface {",
+				"    Process() (string, error)",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp file
+			tmpfile, err := os.CreateTemp("", "test_*.java")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(tmpfile.Name())
+
+			if _, err := tmpfile.Write([]byte(tt.input)); err != nil {
+				t.Fatal(err)
+			}
+			if err := tmpfile.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			// Run translation
+			content, err := os.ReadFile(tmpfile.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			tree := parseJava(content)
+			defer tree.Close()
+
+			ctx := &MigrationContext{
+				javaSource:      content,
+				abstractClasses: make(map[string]bool),
+			}
+			migrateTree(ctx, tree)
+			result := ctx.source.ToSource()
+
+			// Verify exact structure - check that expected strings appear in order
+			resultLines := strings.Split(result, "\n")
+			lineIndex := 0
+			for _, exp := range tt.expected {
+				found := false
+				// Search from current position forward to ensure order
+				for i := lineIndex; i < len(resultLines); i++ {
+					if strings.Contains(resultLines[i], exp) {
+						found = true
+						lineIndex = i + 1
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected output to contain %q (in order), but got:\n%s", exp, result)
+					return
+				}
+			}
+		})
+	}
+}
