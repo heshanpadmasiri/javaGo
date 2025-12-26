@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/pelletier/go-toml/v2"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
@@ -16,6 +18,11 @@ const (
 	SELF_REF     = "this"
 	PACKAGE_NAME = "converted"
 )
+
+type Config struct {
+	PackageName   string `toml:"package_name"`
+	LicenseHeader string `toml:"license_header"`
+}
 
 type MigrationContext struct {
 	source            GoSource
@@ -94,10 +101,17 @@ func (v *ModuleVar) ToSource() string {
 	return fmt.Sprintf("var %s %s", v.name, v.ty.ToSource())
 }
 
-func (s *GoSource) ToSource() string {
+func (s *GoSource) ToSource(config Config) string {
 	sb := strings.Builder{}
+	if config.LicenseHeader != "" {
+		sb.WriteString(config.LicenseHeader)
+		if !strings.HasSuffix(config.LicenseHeader, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
 	sb.WriteString("package ")
-	sb.WriteString(PACKAGE_NAME)
+	sb.WriteString(config.PackageName)
 	sb.WriteString("\n\n")
 	if len(s.imports) > 0 {
 		sb.WriteString("import (\n")
@@ -822,7 +836,43 @@ type SourceElement interface {
 	ToSource() string
 }
 
+func loadConfig() Config {
+	config := Config{
+		PackageName:   PACKAGE_NAME,
+		LicenseHeader: "",
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		return config
+	}
+
+	configPath := filepath.Join(wd, "Config.toml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		// Config file doesn't exist, return defaults
+		return config
+	}
+
+	var fileConfig Config
+	if err := toml.Unmarshal(data, &fileConfig); err != nil {
+		// Invalid TOML, return defaults
+		return config
+	}
+
+	// Use values from file if provided, otherwise keep defaults
+	if fileConfig.PackageName != "" {
+		config.PackageName = fileConfig.PackageName
+	}
+	if fileConfig.LicenseHeader != "" {
+		config.LicenseHeader = fileConfig.LicenseHeader
+	}
+
+	return config
+}
+
 func main() {
+	config := loadConfig()
 	args := os.Args[1:]
 	sourcePath := args[0]
 	var destPath *string
@@ -841,7 +891,7 @@ func main() {
 		enumConstants:   make(map[string]string),
 	}
 	migrateTree(ctx, tree)
-	goSource := ctx.source.ToSource()
+	goSource := ctx.source.ToSource(config)
 	if destPath != nil {
 		// FIXME: use a proper mode
 		err = os.WriteFile(*destPath, []byte(goSource), 0644)
