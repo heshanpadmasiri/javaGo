@@ -67,10 +67,12 @@ func convertAssignmentExpression(ctx *MigrationContext, expression *tree_sitter.
 		}
 	})
 
+	leftExp, leftInit := convertExpression(ctx, refNode)
+	rightExp, rightInit := convertExpression(ctx, valueNode)
+	stmts := append(leftInit, rightInit...)
+	var valueExp gosrc.Expression
 	if operator != "" {
 		// This is a compound assignment: x op= y -> x = x op y
-		leftExp, leftInit := convertExpression(ctx, refNode)
-		rightExp, rightInit := convertExpression(ctx, valueNode)
 
 		// Extract the base operator (remove =)
 		baseOp := operator[:len(operator)-1]
@@ -80,27 +82,21 @@ func convertAssignmentExpression(ctx *MigrationContext, expression *tree_sitter.
 			baseOp = ">>"
 		}
 
-		// Create: left = (left op right)
-		result := &gosrc.BinaryExpression{
+		valueExp = &gosrc.BinaryExpression{
 			Left:     leftExp,
-			Operator: "=",
-			Right: &gosrc.BinaryExpression{
-				Left:     leftExp,
-				Operator: baseOp,
-				Right:    rightExp,
-			},
+			Operator: baseOp,
+			Right:    rightExp,
 		}
-		return result, append(leftInit, rightInit...)
+	} else {
+		// Regular assignment
+		valueExp = rightExp
 	}
 
-	// Regular assignment
-	leftExp, leftInit := convertExpression(ctx, refNode)
-	rightExp, rightInit := convertExpression(ctx, valueNode)
-	return &gosrc.BinaryExpression{
-		Left:     leftExp,
-		Operator: "=",
-		Right:    rightExp,
-	}, append(leftInit, rightInit...)
+	stmts = append(stmts, &gosrc.AssignStatement{
+		Ref:   gosrc.VarRef{Ref: leftExp.ToSource()},
+		Value: valueExp,
+	})
+	return nil, stmts
 }
 
 func convertArrayCreationExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {

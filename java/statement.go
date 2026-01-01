@@ -227,54 +227,8 @@ func convertExpressionStatement(ctx *MigrationContext, stmtNode *tree_sitter.Nod
 	IterateChilden(stmtNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "assignment_expression":
-			// Check for compound assignment operators
-			refNode := child.ChildByFieldName("left")
-			valueNode := child.ChildByFieldName("right")
-
-			var operator string
-			IterateChilden(child, func(grandChild *tree_sitter.Node) {
-				switch grandChild.Kind() {
-				case "|=", "&=", "^=", "<<=", ">>=", "+=", "-=", "*=", "/=", "%=":
-					operator = grandChild.Utf8Text(ctx.JavaSource)
-				}
-			})
-
-			if operator != "" {
-				// Compound assignment: x op= y -> x = x op y
-				leftExp, leftInit := convertExpression(ctx, refNode)
-				rightExp, rightInit := convertExpression(ctx, valueNode)
-				body = append(body, leftInit...)
-				body = append(body, rightInit...)
-
-				// Extract the base operator (remove =)
-				baseOp := operator[:len(operator)-1]
-
-				// Convert >>>= to >>= (Go doesn't have >>>)
-				if baseOp == ">>>" {
-					baseOp = ">>"
-				}
-
-				// Create: x = (x op y)
-				body = append(body, &gosrc.AssignStatement{
-					Ref: gosrc.VarRef{Ref: leftExp.ToSource()},
-					Value: &gosrc.BinaryExpression{
-						Left:     leftExp,
-						Operator: baseOp,
-						Right:    rightExp,
-					},
-				})
-			} else {
-				// Regular assignment
-				ref := gosrc.VarRef{Ref: refNode.Utf8Text(ctx.JavaSource)}
-				valueExp, initStmts := convertExpression(ctx, valueNode)
-				if len(initStmts) > 0 {
-					diagnostics.Fatal(valueNode.ToSexp(), errors.New("unexpected statements in assignment expression"))
-				}
-				body = append(body, &gosrc.AssignStatement{
-					Ref:   ref,
-					Value: valueExp,
-				})
-			}
+			_, stmts := convertAssignmentExpression(ctx, child)
+			body = append(body, stmts...)
 		case "method_invocation":
 			// Check if this is a .add() call that should be converted to append
 			methodName := child.ChildByFieldName("name").Utf8Text(ctx.JavaSource)
