@@ -1,3 +1,8 @@
+# Code style
+
+- Prefer switch statements to if-else statements where possible
+- If you have very complex if else block or switch case block (have > 5 lines), consider extracting that to a function with a meaningful name
+
 # Migration strategy
 
 ## Migration fixes
