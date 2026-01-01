@@ -1,8 +1,8 @@
 package converted
 
-type Outer int
+type Outer uint
 
-type Inner int
+type Inner uint
 
 const (
 	Outer_VALUE1 Outer = iota

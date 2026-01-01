@@ -7,7 +7,7 @@ type Base interface {
 	BaseData
 }
 
-type Type int
+type Type uint
 
 type BaseBase struct {
 }

@@ -1,6 +1,6 @@
 package converted
 
-type Color int
+type Color uint
 
 const (
 	Color_RED Color = iota
