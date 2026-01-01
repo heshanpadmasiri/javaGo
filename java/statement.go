@@ -223,84 +223,78 @@ func convertReturnStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) [
 }
 
 func convertExpressionStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []gosrc.Statement {
-		var body []gosrc.Statement
-		IterateChilden(stmtNode, func(child *tree_sitter.Node) {
-			switch child.Kind() {
-			case "assignment_expression":
-				// Check for compound assignment operators
-				refNode := child.ChildByFieldName("left")
-				valueNode := child.ChildByFieldName("right")
+	var body []gosrc.Statement
+	IterateChilden(stmtNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "assignment_expression":
+			// Check for compound assignment operators
+			refNode := child.ChildByFieldName("left")
+			valueNode := child.ChildByFieldName("right")
 
-				var operator string
-				IterateChilden(child, func(grandChild *tree_sitter.Node) {
-					switch grandChild.Kind() {
-					case "|=", "&=", "^=", "<<=", ">>=", "+=", "-=", "*=", "/=", "%=":
-						operator = grandChild.Utf8Text(ctx.JavaSource)
-					}
-				})
-
-				if operator != "" {
-					// Compound assignment: x op= y -> x = x op y
-					leftExp, leftInit := convertExpression(ctx, refNode)
-					rightExp, rightInit := convertExpression(ctx, valueNode)
-					body = append(body, leftInit...)
-					body = append(body, rightInit...)
-
-					// Extract the base operator (remove =)
-					baseOp := operator[:len(operator)-1]
-
-					// Convert >>>= to >>= (Go doesn't have >>>)
-					if baseOp == ">>>" {
-						baseOp = ">>"
-					}
-
-					// Create: x = (x op y)
-					body = append(body, &gosrc.AssignStatement{
-						Ref: gosrc.VarRef{Ref: leftExp.ToSource()},
-						Value: &gosrc.BinaryExpression{
-							Left:     leftExp,
-							Operator: baseOp,
-							Right:    rightExp,
-						},
-					})
-				} else {
-					// Regular assignment
-					ref := gosrc.VarRef{Ref: refNode.Utf8Text(ctx.JavaSource)}
-					valueExp, initStmts := convertExpression(ctx, valueNode)
-					if len(initStmts) > 0 {
-						diagnostics.Fatal(valueNode.ToSexp(), errors.New("unexpected statements in assignment expression"))
-					}
-					body = append(body, &gosrc.AssignStatement{
-						Ref: ref,
-						Value: valueExp,
-					})
+			var operator string
+			IterateChilden(child, func(grandChild *tree_sitter.Node) {
+				switch grandChild.Kind() {
+				case "|=", "&=", "^=", "<<=", ">>=", "+=", "-=", "*=", "/=", "%=":
+					operator = grandChild.Utf8Text(ctx.JavaSource)
 				}
-			case "method_invocation":
-				// Check if this is a .add() call that should be converted to append
-				methodName := child.ChildByFieldName("name").Utf8Text(ctx.JavaSource)
-				objectNode := child.ChildByFieldName("object")
+			})
 
-				if methodName == "add" && objectNode != nil {
-					// Convert list.add(item) to list = append(list, item)
-					objectText := objectNode.Utf8Text(ctx.JavaSource)
-					argsNode := child.ChildByFieldName("arguments")
-					if argsNode != nil {
-						args := convertArgumentList(ctx, argsNode)
-						if len(args) > 0 {
-							// Create: list = append(list, item)
-							body = append(body, &gosrc.AssignStatement{
-								Ref: gosrc.VarRef{Ref: objectText},
-								Value: &gosrc.CallExpression{
-									Function: "append",
-									Args:     append([]gosrc.Expression{&gosrc.VarRef{Ref: objectText}}, args...),
-								},
-							})
-						} else {
-							// Fall through to regular method call handling
-							callExperession, initStmts := convertExpression(ctx, child)
-							body = append(body, initStmts...)
-							body = append(body, &gosrc.CallStatement{Exp: callExperession})
-						}
+			if operator != "" {
+				// Compound assignment: x op= y -> x = x op y
+				leftExp, leftInit := convertExpression(ctx, refNode)
+				rightExp, rightInit := convertExpression(ctx, valueNode)
+				body = append(body, leftInit...)
+				body = append(body, rightInit...)
+
+				// Extract the base operator (remove =)
+				baseOp := operator[:len(operator)-1]
+
+				// Convert >>>= to >>= (Go doesn't have >>>)
+				if baseOp == ">>>" {
+					baseOp = ">>"
+				}
+
+				// Create: x = (x op y)
+				body = append(body, &gosrc.AssignStatement{
+					Ref: gosrc.VarRef{Ref: leftExp.ToSource()},
+					Value: &gosrc.BinaryExpression{
+						Left:     leftExp,
+						Operator: baseOp,
+						Right:    rightExp,
+					},
+				})
+			} else {
+				// Regular assignment
+				ref := gosrc.VarRef{Ref: refNode.Utf8Text(ctx.JavaSource)}
+				valueExp, initStmts := convertExpression(ctx, valueNode)
+				if len(initStmts) > 0 {
+					diagnostics.Fatal(valueNode.ToSexp(), errors.New("unexpected statements in assignment expression"))
+				}
+				body = append(body, &gosrc.AssignStatement{
+					Ref:   ref,
+					Value: valueExp,
+				})
+			}
+		case "method_invocation":
+			// Check if this is a .add() call that should be converted to append
+			methodName := child.ChildByFieldName("name").Utf8Text(ctx.JavaSource)
+			objectNode := child.ChildByFieldName("object")
+
+			if methodName == "add" && objectNode != nil {
+				// Convert list.add(item) to list = append(list, item)
+				objectText := objectNode.Utf8Text(ctx.JavaSource)
+				argsNode := child.ChildByFieldName("arguments")
+				if argsNode != nil {
+					args := convertArgumentList(ctx, argsNode)
+					if len(args) > 0 {
+						// Create: list = append(list, item)
+						body = append(body, &gosrc.AssignStatement{
+							Ref: gosrc.VarRef{Ref: objectText},
+							Value: &gosrc.CallExpression{
+								Function: "append",
+								Args:     append([]gosrc.Expression{&gosrc.VarRef{Ref: objectText}}, args...),
+							},
+						})
 					} else {
 						// Fall through to regular method call handling
 						callExperession, initStmts := convertExpression(ctx, child)
@@ -308,19 +302,25 @@ func convertExpressionStatement(ctx *MigrationContext, stmtNode *tree_sitter.Nod
 						body = append(body, &gosrc.CallStatement{Exp: callExperession})
 					}
 				} else {
+					// Fall through to regular method call handling
 					callExperession, initStmts := convertExpression(ctx, child)
 					body = append(body, initStmts...)
 					body = append(body, &gosrc.CallStatement{Exp: callExperession})
 				}
-			// ignored
-			case ";":
-			default:
-				expr, initStmts := convertExpression(ctx, child)
+			} else {
+				callExperession, initStmts := convertExpression(ctx, child)
 				body = append(body, initStmts...)
-				body = append(body, &gosrc.GoStatement{Source: expr.ToSource() + ";"})
+				body = append(body, &gosrc.CallStatement{Exp: callExperession})
 			}
-		})
-		return body
+		// ignored
+		case ";":
+		default:
+			expr, initStmts := convertExpression(ctx, child)
+			body = append(body, initStmts...)
+			body = append(body, &gosrc.GoStatement{Source: expr.ToSource() + ";"})
+		}
+	})
+	return body
 }
 
 func convertStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []gosrc.Statement {
@@ -489,8 +489,7 @@ func convertIfStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node, inner
 	return *ifStatement
 }
 
-
-	// Check for finally using field name
+// Check for finally using field name
 func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode *tree_sitter.Node) []gosrc.Statement {
 	parentCall := "this"
 	var argExp []gosrc.Expression
@@ -519,4 +518,3 @@ func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode 
 		},
 	}
 }
-

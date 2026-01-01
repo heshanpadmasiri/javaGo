@@ -55,8 +55,8 @@ func convertArrayInitializer(ctx *MigrationContext, initNode *tree_sitter.Node) 
 
 func convertAssignmentExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {
 	// Check for compound assignment operators
-	leftNode := expression.ChildByFieldName("left")
-	rightNode := expression.ChildByFieldName("right")
+	refNode := expression.ChildByFieldName("left")
+	valueNode := expression.ChildByFieldName("right")
 
 	// Check if this is a compound assignment by looking for operators like |=, &=, etc.
 	var operator string
@@ -69,8 +69,8 @@ func convertAssignmentExpression(ctx *MigrationContext, expression *tree_sitter.
 
 	if operator != "" {
 		// This is a compound assignment: x op= y -> x = x op y
-		leftExp, leftInit := convertExpression(ctx, leftNode)
-		rightExp, rightInit := convertExpression(ctx, rightNode)
+		leftExp, leftInit := convertExpression(ctx, refNode)
+		rightExp, rightInit := convertExpression(ctx, valueNode)
 
 		// Extract the base operator (remove =)
 		baseOp := operator[:len(operator)-1]
@@ -94,8 +94,8 @@ func convertAssignmentExpression(ctx *MigrationContext, expression *tree_sitter.
 	}
 
 	// Regular assignment
-	leftExp, leftInit := convertExpression(ctx, leftNode)
-	rightExp, rightInit := convertExpression(ctx, rightNode)
+	leftExp, leftInit := convertExpression(ctx, refNode)
+	rightExp, rightInit := convertExpression(ctx, valueNode)
 	return &gosrc.BinaryExpression{
 		Left:     leftExp,
 		Operator: "=",
