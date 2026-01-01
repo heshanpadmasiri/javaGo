@@ -230,41 +230,11 @@ func convertExpressionStatement(ctx *MigrationContext, stmtNode *tree_sitter.Nod
 			_, stmts := convertAssignmentExpression(ctx, child)
 			body = append(body, stmts...)
 		case "method_invocation":
-			// Check if this is a .add() call that should be converted to append
-			methodName := child.ChildByFieldName("name").Utf8Text(ctx.JavaSource)
-			objectNode := child.ChildByFieldName("object")
-
-			if methodName == "add" && objectNode != nil {
-				// Convert list.add(item) to list = append(list, item)
-				objectText := objectNode.Utf8Text(ctx.JavaSource)
-				argsNode := child.ChildByFieldName("arguments")
-				if argsNode != nil {
-					args := convertArgumentList(ctx, argsNode)
-					if len(args) > 0 {
-						// Create: list = append(list, item)
-						body = append(body, &gosrc.AssignStatement{
-							Ref: gosrc.VarRef{Ref: objectText},
-							Value: &gosrc.CallExpression{
-								Function: "append",
-								Args:     append([]gosrc.Expression{&gosrc.VarRef{Ref: objectText}}, args...),
-							},
-						})
-					} else {
-						// Fall through to regular method call handling
-						callExperession, initStmts := convertExpression(ctx, child)
-						body = append(body, initStmts...)
-						body = append(body, &gosrc.CallStatement{Exp: callExperession})
-					}
-				} else {
-					// Fall through to regular method call handling
-					callExperession, initStmts := convertExpression(ctx, child)
-					body = append(body, initStmts...)
-					body = append(body, &gosrc.CallStatement{Exp: callExperession})
-				}
-			} else {
-				callExperession, initStmts := convertExpression(ctx, child)
-				body = append(body, initStmts...)
-				body = append(body, &gosrc.CallStatement{Exp: callExperession})
+			expr, stmts := convertMethodInvocation(ctx, child)
+			body = append(body, stmts...)
+			if len(stmts) == 0 {
+				// No statements returned, wrap expression in CallStatement
+				body = append(body, &gosrc.CallStatement{Exp: expr})
 			}
 		// ignored
 		case ";":

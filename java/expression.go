@@ -368,18 +368,19 @@ func convertMethodInvocation(ctx *MigrationContext, expression *tree_sitter.Node
 		// This needs to be handled as a statement, not an expression
 		// For now, return as Go expression that can be used in statements
 		argsNode := expression.ChildByFieldName("arguments")
+		var initStmts []gosrc.Statement
+		ref := gosrc.VarRef{Ref: objectText}
 		if argsNode != nil {
-			args := convertArgumentList(ctx, argsNode)
-			if len(args) > 0 {
-				// Return: append(list, item)
-				return &gosrc.GoExpression{
-					Source: fmt.Sprintf("append(%s, %s)", objectText, args[0].ToSource()),
-				}, nil
+			values := convertArgumentList(ctx, argsNode)
+			if len(values) > 0 {
+				var args []gosrc.Expression
+				args = append(args, &ref)
+				args = append(args, values...)
+				appendCall := &gosrc.CallExpression{Function: "append", Args: args}
+				initStmts = append(initStmts, &gosrc.AssignStatement{Ref: ref, Value: appendCall})
 			}
 		}
-		return &gosrc.GoExpression{
-			Source: SELF_REF + "." + expression.Utf8Text(ctx.JavaSource),
-		}, nil
+		return &ref, initStmts
 	default:
 		// Handle method calls on this or other objects
 		if objectText == "this" || objectText == SELF_REF {
