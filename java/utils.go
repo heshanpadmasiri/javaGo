@@ -56,3 +56,14 @@ func IterateChilden(node *tree_sitter.Node, fn func(child *tree_sitter.Node)) {
 		fn(&child)
 	}
 }
+
+// IterateChildenWhile iterates over all children of a node while fn returns true
+func IterateChildenWhile(node *tree_sitter.Node, fn func(child *tree_sitter.Node) bool) {
+	cursor := node.Walk()
+	children := node.Children(cursor)
+	for _, child := range children {
+		if !fn(&child) {
+			return
+		}
+	}
+}

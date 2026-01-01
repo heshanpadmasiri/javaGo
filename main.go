@@ -30,8 +30,11 @@ func main() {
 	java.MigrateTree(ctx, tree)
 	goSource := ctx.Source.ToSource(config)
 	if destPath != nil {
-		// FIXME: use a proper mode
+		// TODO: use a proper mode
 		err = os.WriteFile(*destPath, []byte(goSource), 0644)
+		if err != nil {
+			diagnostics.Fatal("Failed to write to file", err)
+		}
 	} else {
 		fmt.Println(goSource)
 	}

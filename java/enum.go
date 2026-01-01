@@ -15,6 +15,58 @@ type EnumConstant struct {
 	arguments []gosrc.Expression
 }
 
+// TODO: this is mostly ai slop which is good enough for now. But we should be able to do better.
+
+// extractEnumConstant extracts an EnumConstant from a tree-sitter node.
+// It handles multiple node structures:
+// 1. Nodes with a "name" field (and optional "arguments" field)
+// 2. Nodes that are "identifier" directly
+// 3. Nodes that contain "identifier" children
+// Returns nil if no constant can be extracted.
+func extractEnumConstant(ctx *MigrationContext, node *tree_sitter.Node) *EnumConstant {
+	// First try: Get name field from node
+	constantNameNode := node.ChildByFieldName("name")
+	if constantNameNode != nil {
+		constantName := constantNameNode.Utf8Text(ctx.JavaSource)
+		var args []gosrc.Expression
+		argsNode := node.ChildByFieldName("arguments")
+		if argsNode != nil {
+			args = convertArgumentList(ctx, argsNode)
+		}
+		return &EnumConstant{
+			name:      constantName,
+			arguments: args,
+		}
+	}
+
+	// Second try: If node is identifier, use its text as name
+	if node.Kind() == "identifier" {
+		constantName := node.Utf8Text(ctx.JavaSource)
+		return &EnumConstant{
+			name:      constantName,
+			arguments: []gosrc.Expression{},
+		}
+	}
+
+	// Third try: Iterate children looking for identifier node
+	var constantName string
+	IterateChilden(node, func(child *tree_sitter.Node) {
+		if child.Kind() == "identifier" && constantName == "" {
+			constantName = child.Utf8Text(ctx.JavaSource)
+		}
+	})
+
+	if constantName != "" {
+		return &EnumConstant{
+			name:      constantName,
+			arguments: []gosrc.Expression{},
+		}
+	}
+
+	// No constant could be extracted
+	return nil
+}
+
 func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 	var enumName string
 	var modifiers modifiers
@@ -31,93 +83,44 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 		case "enum_constants":
 			// Parse enum constants list
 			IterateChilden(child, func(constantChild *tree_sitter.Node) {
-				// FIXME: turn to switch
-				if constantChild.Kind() == "enum_constant" {
-					// Extract constant name
-					constantNameNode := constantChild.ChildByFieldName("name")
-					if constantNameNode != nil {
-						constantName := constantNameNode.Utf8Text(ctx.JavaSource)
-						// Parse constructor arguments if present
-						var args []gosrc.Expression
-						argsNode := constantChild.ChildByFieldName("arguments")
-						if argsNode != nil {
-							args = convertArgumentList(ctx, argsNode)
-						}
-						enumConstants = append(enumConstants, EnumConstant{
-							name:      constantName,
-							arguments: args,
-						})
-					}
-				} else if constantChild.Kind() == "identifier" {
-					// Might be a constant name directly
-					constantName := constantChild.Utf8Text(ctx.JavaSource)
-					enumConstants = append(enumConstants, EnumConstant{
-						name:      constantName,
-						arguments: []gosrc.Expression{},
-					})
+				if enumConst := extractEnumConstant(ctx, constantChild); enumConst != nil {
+					enumConstants = append(enumConstants, *enumConst)
 				}
 			})
 		case "enum_constant":
 			// Handle enum constant as direct child (fallback)
-			constantNameNode := child.ChildByFieldName("name")
-			if constantNameNode != nil {
-				constantName := constantNameNode.Utf8Text(ctx.JavaSource)
-				var args []gosrc.Expression
-				argsNode := child.ChildByFieldName("arguments")
-				if argsNode != nil {
-					args = convertArgumentList(ctx, argsNode)
-				}
-				enumConstants = append(enumConstants, EnumConstant{
-					name:      constantName,
-					arguments: args,
-				})
-			} else {
-				// Try to get name from identifier child
-				IterateChilden(child, func(constantChild *tree_sitter.Node) {
-					if constantChild.Kind() == "identifier" {
-						constantName := constantChild.Utf8Text(ctx.JavaSource)
-						enumConstants = append(enumConstants, EnumConstant{
-							name:      constantName,
-							arguments: []gosrc.Expression{},
-						})
-					}
-				})
+			if enumConst := extractEnumConstant(ctx, child); enumConst != nil {
+				enumConstants = append(enumConstants, *enumConst)
 			}
 		case "enum_body":
 			enumBody = child
 			// Parse constants and check for fields in the body
 			IterateChilden(child, func(bodyChild *tree_sitter.Node) {
-				// FIXME: use switch on kind
-				if bodyChild.Kind() == "field_declaration" {
+				switch bodyChild.Kind() {
+				case "field_declaration":
 					hasFields = true
-				} else if bodyChild.Kind() == "enum_constant" {
+				case "enum_constant":
 					// Constants might be in the body
-					constantNameNode := bodyChild.ChildByFieldName("name")
-					if constantNameNode != nil {
-						constantName := constantNameNode.Utf8Text(ctx.JavaSource)
-						var args []gosrc.Expression
-						argsNode := bodyChild.ChildByFieldName("arguments")
-						if argsNode != nil {
-							args = convertArgumentList(ctx, argsNode)
-						}
+					if enumConst := extractEnumConstant(ctx, bodyChild); enumConst != nil {
+						enumConstants = append(enumConstants, *enumConst)
+					}
+				case "identifier":
+					if len(enumConstants) == 0 {
+						// Might be a constant name if we haven't found any constants yet
+						constantName := bodyChild.Utf8Text(ctx.JavaSource)
 						enumConstants = append(enumConstants, EnumConstant{
 							name:      constantName,
-							arguments: args,
+							arguments: []gosrc.Expression{},
 						})
 					}
-				} else if bodyChild.Kind() == "identifier" && len(enumConstants) == 0 {
-					// Might be a constant name if we haven't found any constants yet
-					constantName := bodyChild.Utf8Text(ctx.JavaSource)
-					enumConstants = append(enumConstants, EnumConstant{
-						name:      constantName,
-						arguments: []gosrc.Expression{},
-					})
 				}
 				// Also check nested nodes for field_declaration (in case of nested structures)
-				// FIXME: introduce a new IterateChildenWhile method that takes a a function that returning a boolean. Continue while it returns true to early stop this
-				IterateChilden(bodyChild, func(nestedChild *tree_sitter.Node) {
+				IterateChildenWhile(bodyChild, func(nestedChild *tree_sitter.Node) bool {
 					if nestedChild.Kind() == "field_declaration" {
 						hasFields = true
+						return false
+					} else {
+						return true
 					}
 				})
 			})
@@ -127,10 +130,10 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 				enumBody = child
 				// Parse constants and check for fields in the body
 				IterateChilden(child, func(bodyChild *tree_sitter.Node) {
-					// FIXME: use switch
-					if bodyChild.Kind() == "field_declaration" {
+					switch bodyChild.Kind() {
+					case "field_declaration":
 						hasFields = true
-					} else if bodyChild.Kind() == "enum_constant" {
+					case "enum_constant":
 						constantNameNode := bodyChild.ChildByFieldName("name")
 						if constantNameNode != nil {
 							constantName := constantNameNode.Utf8Text(ctx.JavaSource)
@@ -200,9 +203,12 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 
 	// Re-check for fields in enum body if we have one (fields might come after constants)
 	if enumBody != nil && !hasFields {
-		IterateChilden(enumBody, func(bodyChild *tree_sitter.Node) {
+		IterateChildenWhile(enumBody, func(bodyChild *tree_sitter.Node) bool {
 			if bodyChild.Kind() == "field_declaration" {
 				hasFields = true
+				return false
+			} else {
+				return true
 			}
 		})
 	}
