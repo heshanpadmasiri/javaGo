@@ -1468,11 +1468,11 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 }
 
 func convertSimpleEnum(ctx *MigrationContext, enumTypeName string, enumConstants []EnumConstant, enumBody *tree_sitter.Node, modifiers modifiers, isPublic bool) {
-	// Generate type declaration: type EnumName int
+	// Generate type declaration: type EnumName uint
 	ctx.source.structs = append(ctx.source.structs, Struct{
 		name:     enumTypeName,
 		fields:   []StructField{},
-		comments: []string{fmt.Sprintf("type %s int", enumTypeName)},
+		comments: []string{fmt.Sprintf("type %s uint", enumTypeName)},
 		public:   isPublic,
 		includes: []Type{},
 	})

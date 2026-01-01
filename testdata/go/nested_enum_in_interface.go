@@ -3,7 +3,7 @@ package converted
 type Container interface {
 }
 
-type Item int
+type Item uint
 
 const (
 	Item_A Item = iota

@@ -1,6 +1,6 @@
 package converted
 
-type Inner int
+type Inner uint
 
 type Outer struct {
 	X int
