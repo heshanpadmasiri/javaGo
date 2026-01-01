@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/heshanpadmasiri/javaGo/gosrc"
+	"github.com/heshanpadmasiri/javaGo/java"
 )
 
 var update = flag.Bool("update", false, "update expected Go files")
@@ -71,20 +74,20 @@ func TestMigration(t *testing.T) {
 			goFile := getGoFilePath(javaFile)
 
 			// Run migration
-			tree := parseJava(javaContent)
+			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := &MigrationContext{
-				javaSource:      javaContent,
-				abstractClasses: make(map[string]bool),
-				enumConstants:   make(map[string]string),
+			ctx := &java.MigrationContext{
+				JavaSource:      javaContent,
+				AbstractClasses: make(map[string]bool),
+				EnumConstants:   make(map[string]string),
 			}
-			migrateTree(ctx, tree)
-			config := Config{
-				PackageName:   PACKAGE_NAME,
+			java.MigrateTree(ctx, tree)
+			config := gosrc.Config{
+				PackageName:   "converted",
 				LicenseHeader: "",
 			}
-			result := ctx.source.ToSource(config)
+			result := ctx.Source.ToSource(config)
 
 			// Format output with go fmt
 			formatted, err := formatGoCode(result)
@@ -126,11 +129,11 @@ func TestMigration(t *testing.T) {
 
 func TestMigrationWithConfig(t *testing.T) {
 	tests := []struct {
-		name           string
-		configContent  string
-		createConfig   bool
-		expectedPkg    string
-		expectedLicense string
+		name                  string
+		configContent         string
+		createConfig          bool
+		expectedPkg           string
+		expectedLicense       string
 		expectLicenseInOutput bool
 	}{
 		{
@@ -161,15 +164,15 @@ license_header = """// Copyright 2024 Test Company
 """
 `,
 			createConfig:          true,
-			expectedPkg:           PACKAGE_NAME,
+			expectedPkg:           "converted",
 			expectedLicense:       "// MIT License\n",
 			expectLicenseInOutput: true,
 		},
 		{
-			name: "no_config_file",
+			name:                  "no_config_file",
 			configContent:         "",
 			createConfig:          false,
-			expectedPkg:           PACKAGE_NAME,
+			expectedPkg:           java.PACKAGE_NAME,
 			expectedLicense:       "",
 			expectLicenseInOutput: false,
 		},
@@ -208,18 +211,18 @@ license_header = """// Copyright 2024 Test Company
 			javaContent := []byte("public record Point(int x, int y) {}")
 
 			// Run migration
-			tree := parseJava(javaContent)
+			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := &MigrationContext{
-				javaSource:      javaContent,
-				abstractClasses: make(map[string]bool),
-				enumConstants:   make(map[string]string),
+			ctx := &java.MigrationContext{
+				JavaSource:      javaContent,
+				AbstractClasses: make(map[string]bool),
+				EnumConstants:   make(map[string]string),
 			}
-			migrateTree(ctx, tree)
+			java.MigrateTree(ctx, tree)
 
 			// Load config (should read from Config.toml in current directory)
-			config := loadConfig()
+			config := java.LoadConfig()
 
 			// Verify config was loaded correctly
 			if config.PackageName != tt.expectedPkg {
@@ -230,7 +233,7 @@ license_header = """// Copyright 2024 Test Company
 			}
 
 			// Generate Go source with config
-			result := ctx.source.ToSource(config)
+			result := ctx.Source.ToSource(config)
 
 			// Verify the output contains the expected package name
 			expectedPkgLine := "package " + tt.expectedPkg
