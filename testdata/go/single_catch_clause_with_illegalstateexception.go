@@ -3,6 +3,11 @@ package converted
 type test struct {
 }
 
+func newTest() test {
+	this := test{}
+	return this
+}
+
 func (this *test) getCompletion(context ParserRuleContext, nextToken Token) Solution {
 	tempCtxStack := this.ctxStack
 	this.ctxStack = this.getCtxStackSnapshot()

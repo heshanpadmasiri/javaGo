@@ -76,7 +76,8 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 				} else {
 					structName = gosrc.ToIdentifier(className, modifiers.isPublic())
 				}
-				result := convertClassBody(ctx, structName, child, false)
+				isPublicClass := modifiers&PUBLIC != 0
+				result := convertClassBody(ctx, structName, child, false, isPublicClass)
 				ctx.Source.Functions = append(ctx.Source.Functions, result.Functions...)
 				for i := range result.Methods {
 					method := &result.Methods[i]
@@ -516,9 +517,10 @@ func convertExpressionForDefaultMethod(ctx *MigrationContext, expr gosrc.Express
 	}
 }
 
-func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_sitter.Node, isAbstract bool) classConversionResult {
+func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_sitter.Node, isAbstract bool, isPublicClass bool) classConversionResult {
 	var result classConversionResult
 	fieldInitValues := map[string]gosrc.Expression{}
+	hasConstructor := false
 	IterateChilden(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "class_declaration":
@@ -545,8 +547,8 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 				result.Fields = append(result.Fields, field)
 			}
 		case "constructor_declaration":
-			constructor := convertConstructor(ctx, &fieldInitValues, structName, child)
-			result.Functions = append(result.Functions, constructor)
+			result.Functions = append(result.Functions, convertConstructor(ctx, &fieldInitValues, structName, child, isPublicClass))
+			hasConstructor = true
 		case "compact_constructor_declaration":
 			// Compact constructors are handled in migrateRecordDeclaration, skip here
 		case "method_declaration":
@@ -571,6 +573,12 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 			UnhandledChild(ctx, child, "class_body")
 		}
 	})
+
+	// Generate default no-arg constructor if none exists and class is not abstract
+	if !hasConstructor && !isAbstract {
+		result.Functions = append(result.Functions, convertConstructor(ctx, &fieldInitValues, structName, nil, isPublicClass))
+	}
+
 	return result
 }
 
@@ -642,7 +650,7 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 	}, isStatic, isAbstract
 }
 
-func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, structName string, constructorNode *tree_sitter.Node) gosrc.Function {
+func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, structName string, constructorNode *tree_sitter.Node, isPublicClass bool) gosrc.Function {
 	var modifiers modifiers
 	var params []gosrc.Param
 	var body []gosrc.Statement
@@ -654,7 +662,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 		case "formal_parameters":
 			params = convertFormalParameters(ctx, child)
 		case "constructor_body":
-			body = append(body, convertConstructorBody(ctx, fieldInitValues, structName, child)...)
+			body = append(body, convertConstructorBody(ctx, fieldInitValues, child)...)
 		// ignored
 		case "identifier":
 		case "line_comment":
@@ -663,6 +671,13 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 			UnhandledChild(ctx, child, "constructor_declaration")
 		}
 	})
+	if constructorNode == nil {
+		// Default constructor - use class visibility
+		if isPublicClass {
+			modifiers = PUBLIC
+		}
+		body = append(body, fieldInitStmts(fieldInitValues)...)
+	}
 	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: gosrc.SelfRef}})
 	name := constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
 	retTy := gosrc.Type(structName)
@@ -675,14 +690,8 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 	}
 }
 
-func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, structName string, bodyNode *tree_sitter.Node) []gosrc.Statement {
-	var body []gosrc.Statement
-	for fieldName, initExpr := range *fieldInitValues {
-		body = append(body, &gosrc.AssignStatement{Ref: gosrc.VarRef{Ref: gosrc.SelfRef + "." + fieldName}, Value: initExpr})
-	}
-	if len(*fieldInitValues) > 0 {
-		body = append(body, &gosrc.CommentStmt{Comments: []string{"Default field initializations"}})
-	}
+func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, bodyNode *tree_sitter.Node) []gosrc.Statement {
+	body := fieldInitStmts(fieldInitValues)
 	IterateChilden(bodyNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "explicit_constructor_invocation":
@@ -698,5 +707,19 @@ func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]g
 			UnhandledChild(ctx, child, "constructor_body")
 		}
 	})
+	return body
+}
+
+func fieldInitStmts(fieldInitValues *map[string]gosrc.Expression) []gosrc.Statement {
+	if fieldInitValues == nil {
+		return nil
+	}
+	var body []gosrc.Statement
+	for fieldName, initExpr := range *fieldInitValues {
+		body = append(body, &gosrc.AssignStatement{Ref: gosrc.VarRef{Ref: gosrc.SelfRef + "." + fieldName}, Value: initExpr})
+	}
+	if len(*fieldInitValues) > 0 {
+		body = append(body, &gosrc.CommentStmt{Comments: []string{"Default field initializations"}})
+	}
 	return body
 }

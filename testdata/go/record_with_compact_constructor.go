@@ -18,3 +18,8 @@ func newRationalFromNumDenom(num int, denom int) Rational {
 	this.Denom = denom
 	return this
 }
+
+func NewRational() Rational {
+	this := Rational{}
+	return this
+}

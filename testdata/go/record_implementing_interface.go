@@ -11,6 +11,11 @@ type Person struct {
 
 var _ Printable = &Person{}
 
+func NewPerson() Person {
+	this := Person{}
+	return this
+}
+
 func (this *Person) Print() {
 	this.System.out.println("Person: " + name + ", Age: " + age)
 }

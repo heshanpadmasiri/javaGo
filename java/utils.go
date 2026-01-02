@@ -52,6 +52,9 @@ func Assert(msg string, condition bool) {
 
 // IterateChilden iterates over all children of a node and calls fn for each
 func IterateChilden(node *tree_sitter.Node, fn func(child *tree_sitter.Node)) {
+	if node == nil {
+		return
+	}
 	cursor := node.Walk()
 	children := node.Children(cursor)
 	for _, child := range children {
@@ -61,6 +64,9 @@ func IterateChilden(node *tree_sitter.Node, fn func(child *tree_sitter.Node)) {
 
 // IterateChildenWhile iterates over all children of a node while fn returns true
 func IterateChildenWhile(node *tree_sitter.Node, fn func(child *tree_sitter.Node) bool) {
+	if node == nil {
+		return
+	}
 	cursor := node.Walk()
 	children := node.Children(cursor)
 	for _, child := range children {

@@ -24,6 +24,11 @@ type Bar struct {
 	FooMethods
 }
 
+func newBar() Bar {
+	this := Bar{}
+	return this
+}
+
 func (b *FooBase) GetA() int {
 	return b.A
 }

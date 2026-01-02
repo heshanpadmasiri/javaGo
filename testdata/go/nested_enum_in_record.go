@@ -10,3 +10,8 @@ const (
 	Inner_ONE Inner = iota
 	Inner_TWO
 )
+
+func NewOuter() Outer {
+	this := Outer{}
+	return this
+}

@@ -95,7 +95,7 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 				compactConstructor := convertCompactConstructor(ctx, fields, structName, compactConstructorNode)
 				ctx.Source.Functions = append(ctx.Source.Functions, compactConstructor)
 			}
-			result := convertClassBody(ctx, recordName, child, false)
+			result := convertClassBody(ctx, recordName, child, false, modifiers.isPublic())
 			// Add any additional fields from the body
 			fields = append(fields, result.Fields...)
 			// Add methods with the record as receiver, converting field references
