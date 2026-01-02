@@ -3,7 +3,9 @@ package java
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/heshanpadmasiri/javaGo/gosrc"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 )
@@ -66,4 +68,17 @@ func IterateChildenWhile(node *tree_sitter.Node, fn func(child *tree_sitter.Node
 			return
 		}
 	}
+}
+
+func constructorName(ctx *MigrationContext, isPublic bool, ty gosrc.Type, params ...gosrc.Param) string {
+	nameBuilder := strings.Builder{}
+	nameBuilder.WriteString(gosrc.ToIdentifier("new", isPublic))
+	nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(ty.ToSource()))
+	if len(params) > 0 {
+		nameBuilder.WriteString("From")
+		for _, param := range params {
+			nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(param.Name))
+		}
+	}
+	return nameBuilder.String()
 }

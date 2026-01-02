@@ -557,7 +557,7 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 				result.Methods = append(result.Methods, gosrc.Method{
 					Function: function,
 					Receiver: gosrc.Param{
-						Name: SELF_REF,
+						Name: gosrc.SelfRef,
 						Ty:   gosrc.Type("*" + structName),
 					},
 				})
@@ -646,7 +646,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 	var modifiers modifiers
 	var params []gosrc.Param
 	var body []gosrc.Statement
-	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", SELF_REF, structName)})
+	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
 	IterateChilden(constructorNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
@@ -663,15 +663,8 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 			UnhandledChild(ctx, child, "constructor_declaration")
 		}
 	})
-	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: SELF_REF}})
-	nameBuilder := strings.Builder{}
-	nameBuilder.WriteString(gosrc.ToIdentifier("new", modifiers.isPublic()))
-	nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(structName))
-	nameBuilder.WriteString("From")
-	for _, param := range params {
-		nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(param.Name))
-	}
-	name := nameBuilder.String()
+	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: gosrc.SelfRef}})
+	name := constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
 	retTy := gosrc.Type(structName)
 	return gosrc.Function{
 		Name:       name,
@@ -685,7 +678,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, structName string, bodyNode *tree_sitter.Node) []gosrc.Statement {
 	var body []gosrc.Statement
 	for fieldName, initExpr := range *fieldInitValues {
-		body = append(body, &gosrc.AssignStatement{Ref: gosrc.VarRef{Ref: SELF_REF + "." + fieldName}, Value: initExpr})
+		body = append(body, &gosrc.AssignStatement{Ref: gosrc.VarRef{Ref: gosrc.SelfRef + "." + fieldName}, Value: initExpr})
 	}
 	if len(*fieldInitValues) > 0 {
 		body = append(body, &gosrc.CommentStmt{Comments: []string{"Default field initializations"}})

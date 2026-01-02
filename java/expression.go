@@ -383,12 +383,12 @@ func convertMethodInvocation(ctx *MigrationContext, expression *tree_sitter.Node
 		return &ref, initStmts
 	default:
 		// Handle method calls on this or other objects
-		if objectText == "this" || objectText == SELF_REF {
+		if objectText == "this" || objectText == gosrc.SelfRef {
 			// Special handling for Java enum name() method
 			if name == "name" {
 				// this.Name() -> this.Name() (will need a Name() method implementation)
 				return &gosrc.GoExpression{
-					Source: fmt.Sprintf("%s.Name()", SELF_REF),
+					Source: fmt.Sprintf("%s.Name()", gosrc.SelfRef),
 				}, nil
 			}
 			// gosrc.Method call on this - just capitalize method name
@@ -404,7 +404,7 @@ func convertMethodInvocation(ctx *MigrationContext, expression *tree_sitter.Node
 				argsStr = strings.Join(argStrs, ", ")
 			}
 			return &gosrc.GoExpression{
-				Source: fmt.Sprintf("%s.%s(%s)", SELF_REF, capitalizedName, argsStr),
+				Source: fmt.Sprintf("%s.%s(%s)", gosrc.SelfRef, capitalizedName, argsStr),
 			}, nil
 		}
 		// Handle method calls on enum constants
@@ -426,7 +426,7 @@ func convertMethodInvocation(ctx *MigrationContext, expression *tree_sitter.Node
 			}, nil
 		}
 		return &gosrc.GoExpression{
-			Source: SELF_REF + "." + exprText,
+			Source: gosrc.SelfRef + "." + exprText,
 		}, nil
 	}
 	// Fallback

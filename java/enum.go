@@ -268,7 +268,7 @@ func convertSimpleEnum(ctx *MigrationContext, enumTypeName string, enumConstants
 						ctx.Source.Methods = append(ctx.Source.Methods, gosrc.Method{
 							Function: function,
 							Receiver: gosrc.Param{
-								Name: SELF_REF,
+								Name: gosrc.SelfRef,
 								Ty:   gosrc.Type("*" + enumTypeName),
 							},
 						})
@@ -316,7 +316,7 @@ func convertComplexEnum(ctx *MigrationContext, enumTypeName string, enumConstant
 					ctx.Source.Methods = append(ctx.Source.Methods, gosrc.Method{
 						Function: function,
 						Receiver: gosrc.Param{
-							Name: SELF_REF,
+							Name: gosrc.SelfRef,
 							Ty:   gosrc.Type("*" + enumTypeName),
 						},
 					})
