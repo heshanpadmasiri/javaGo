@@ -10,7 +10,7 @@ type Circle struct {
 
 var _ Drawable = &Circle{}
 
-func NewCircleFromRadius(radius int) Circle {
+func NewCircleFromInt(radius int) Circle {
 	this := Circle{}
 	this.radius = radius
 	return this

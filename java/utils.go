@@ -77,7 +77,7 @@ func constructorName(ctx *MigrationContext, isPublic bool, ty gosrc.Type, params
 	if len(params) > 0 {
 		nameBuilder.WriteString("From")
 		for _, param := range params {
-			nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(param.Name))
+			nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(param.Ty.ToSource()))
 		}
 	}
 	return nameBuilder.String()
