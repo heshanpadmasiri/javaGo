@@ -2,6 +2,7 @@ package java
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/heshanpadmasiri/javaGo/gosrc"
@@ -715,7 +716,16 @@ func fieldInitStmts(fieldInitValues *map[string]gosrc.Expression) []gosrc.Statem
 		return nil
 	}
 	var body []gosrc.Statement
-	for fieldName, initExpr := range *fieldInitValues {
+
+	// Sort field names for consistent output
+	fieldNames := make([]string, 0, len(*fieldInitValues))
+	for fieldName := range *fieldInitValues {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	sort.Strings(fieldNames)
+
+	for _, fieldName := range fieldNames {
+		initExpr := (*fieldInitValues)[fieldName]
 		body = append(body, &gosrc.AssignStatement{Ref: gosrc.VarRef{Ref: gosrc.SelfRef + "." + fieldName}, Value: initExpr})
 	}
 	if len(*fieldInitValues) > 0 {

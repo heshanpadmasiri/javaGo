@@ -7,8 +7,8 @@ type WithDefaults struct {
 
 func NewWithDefaults() WithDefaults {
 	this := WithDefaults{}
-	this.value = 42
 	this.name = "default"
+	this.value = 42
 	// Default field initializations
 
 	return this
