@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/heshanpadmasiri/javaGo/diagnostics"
+	"github.com/heshanpadmasiri/javaGo/gosrc"
 	"github.com/heshanpadmasiri/javaGo/java"
 )
 
@@ -26,12 +27,13 @@ func main() {
 		JavaSource:      javaSource,
 		AbstractClasses: make(map[string]bool),
 		EnumConstants:   make(map[string]string),
+		Constructors:    make(map[gosrc.Type][]java.FunctionData),
 	}
 	java.MigrateTree(ctx, tree)
 	goSource := ctx.Source.ToSource(config)
 	if destPath != nil {
 		// TODO: use a proper mode
-		err = os.WriteFile(*destPath, []byte(goSource), 0644)
+		err = os.WriteFile(*destPath, []byte(goSource), 0o644)
 		if err != nil {
 			diagnostics.Fatal("Failed to write to file", err)
 		}

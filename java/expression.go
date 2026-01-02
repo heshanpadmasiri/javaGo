@@ -127,6 +127,95 @@ func convertArrayCreationExpression(ctx *MigrationContext, expression *tree_sitt
 	}, nil
 }
 
+func handleFailedToFindConstructor(ty gosrc.Type) (gosrc.Expression, []gosrc.Statement) {
+	// Generate no-args constructor name
+	// Assume constructor is always public: NewTypeName()
+	typeName := ty.ToSource()
+	constructorName := "New" + gosrc.CapitalizeFirstLetter(typeName)
+
+	// Call the no-args constructor with a FIXME comment
+	comment := fmt.Sprintf("FIXME: failed to find constructor for %s", ty)
+	callExpr := &gosrc.CallExpression{
+		Function: constructorName,
+		Args:     []gosrc.Expression{},
+	}
+	return callExpr, []gosrc.Statement{
+		&gosrc.CommentStmt{Comments: []string{comment}},
+	}
+}
+
+// extractTypeArguments extracts type arguments from a generic type node
+// Returns a slice of Go type strings (e.g., ["string", "int"])
+func extractTypeArguments(ctx *MigrationContext, expression *tree_sitter.Node) []string {
+	var types []string
+	typeArgsNode := expression.ChildByFieldName("type").ChildByFieldName("type_arguments")
+	if typeArgsNode != nil {
+		IterateChilden(typeArgsNode, func(child *tree_sitter.Node) {
+			switch child.Kind() {
+			case "type_identifier":
+				childTy, ok := TryParseType(ctx, child)
+				if ok {
+					types = append(types, string(childTy))
+				}
+			case "integral_type":
+				types = append(types, "int")
+			case "boolean_type":
+				types = append(types, "bool")
+			}
+		})
+	}
+	return types
+}
+
+// TODO: ai slop revist this later
+func convertArrayListCreationExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {
+	// Extract element type from generic if present: ArrayList<Type> -> Type
+	elementType := "interface{}"
+	types := extractTypeArguments(ctx, expression)
+	if len(types) >= 1 {
+		elementType = types[0]
+	}
+
+	// Convert to Go slice: make([]Type, 0)
+	return &gosrc.GoExpression{
+		Source: fmt.Sprintf("make([]%s, 0)", elementType),
+	}, nil
+}
+
+// TODO: ai slop revist this later
+func convertHashSetCreationExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {
+	// Extract element type from generic if present: HashSet<Type> -> Type
+	elementType := "interface{}"
+	types := extractTypeArguments(ctx, expression)
+	if len(types) >= 1 {
+		elementType = types[0]
+	}
+
+	// Convert to Go map with bool values: make(map[Type]bool)
+	return &gosrc.GoExpression{
+		Source: fmt.Sprintf("make(map[%s]bool)", elementType),
+	}, nil
+}
+
+// TODO: ai slop revist this later
+func convertHashMapCreationExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {
+	// Extract key and value types from generics if present
+	keyType := "interface{}"
+	valueType := "interface{}"
+	types := extractTypeArguments(ctx, expression)
+	if len(types) >= 1 {
+		keyType = types[0]
+	}
+	if len(types) >= 2 {
+		valueType = types[1]
+	}
+
+	// Convert to Go map: make(map[keyType]valueType)
+	return &gosrc.GoExpression{
+		Source: fmt.Sprintf("make(map[%s]%s)", keyType, valueType),
+	}, nil
+}
+
 func convertObjectCreationExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {
 	ty, isType := TryParseType(ctx, expression.ChildByFieldName("type"))
 	if !isType {
@@ -138,31 +227,72 @@ func convertObjectCreationExpression(ctx *MigrationContext, expression *tree_sit
 		}, nil
 	}
 
-	// Check for ArrayList creation: new ArrayList<>() or new ArrayList<gosrc.Type>()
+	// Check for ArrayList creation: new ArrayList<>() or new ArrayList<Type>()
 	typeText := expression.ChildByFieldName("type").Utf8Text(ctx.JavaSource)
-	if strings.HasPrefix(typeText, "ArrayList") {
-		// Extract element type from generic if present: ArrayList<gosrc.Type> -> gosrc.Type
-		// For now, use interface{} as default
-		elementType := "interface{}"
-
-		// Try to find type arguments
-		typeArgsNode := expression.ChildByFieldName("type").ChildByFieldName("type_arguments")
-		if typeArgsNode != nil {
-			IterateChilden(typeArgsNode, func(child *tree_sitter.Node) {
-				if child.Kind() == "type_identifier" {
-					elementType = child.Utf8Text(ctx.JavaSource)
-				}
-			})
-		}
-
-		// Convert to Go slice: make([]gosrc.Type, 0)
-		return &gosrc.GoExpression{
-			Source: fmt.Sprintf("make([]%s, 0)", elementType),
-		}, nil
+	if strings.Contains(typeText, "ArrayList") {
+		return convertArrayListCreationExpression(ctx, expression)
 	}
 
-	// TODO: properly initialize objects here
-	return &gosrc.NIL, nil
+	// Check for LinkedList creation: new LinkedList<>() or new LinkedList<Type>()
+	// LinkedList is also converted to a slice in Go (same as ArrayList)
+	if strings.Contains(typeText, "LinkedList") {
+		return convertArrayListCreationExpression(ctx, expression)
+	}
+
+	// Check for HashSet creation: new HashSet<>() or new HashSet<Type>()
+	if strings.Contains(typeText, "HashSet") {
+		return convertHashSetCreationExpression(ctx, expression)
+	}
+
+	// Check for HashMap creation: new HashMap<>() or new HashMap<K, V>()
+	if strings.Contains(typeText, "HashMap") {
+		return convertHashMapCreationExpression(ctx, expression)
+	}
+
+	// Get arguments from the object creation expression
+	argsNode := expression.ChildByFieldName("arguments")
+	var args []gosrc.Expression
+	if argsNode != nil {
+		args = convertArgumentList(ctx, argsNode)
+	}
+
+	// Look up constructors for this type
+	// Try with the type as-is first, then try with lowercase first letter (for non-public classes)
+	constructors, hasConstructors := ctx.Constructors[ty]
+	if !hasConstructors {
+		// Try with lowercase first letter for non-public classes
+		lowercaseTy := gosrc.Type(gosrc.LowercaseFirstLetter(string(ty)))
+		constructors, hasConstructors = ctx.Constructors[lowercaseTy]
+	}
+	if !hasConstructors {
+		// No constructors registered for this type
+		return handleFailedToFindConstructor(ty)
+	}
+
+	// Try to find matching constructor by parameter count
+	constructorName, found, multipleMatch := tryGuessOverloadedMethod(constructors, len(args))
+
+	if !found {
+		// No constructor with matching number of parameters
+		return handleFailedToFindConstructor(ty)
+	}
+
+	// Generate constructor call
+	callExpr := &gosrc.CallExpression{
+		Function: constructorName,
+		Args:     args,
+	}
+
+	if multipleMatch {
+		// Multiple constructors match - add FIXME comment as init statement
+		comment := fmt.Sprintf("FIXME: more than one possible constructor for %s", ty)
+		return callExpr, []gosrc.Statement{
+			&gosrc.CommentStmt{Comments: []string{comment}},
+		}
+	}
+
+	// Exactly one constructor matches - return clean call
+	return callExpr, nil
 }
 
 func convertIdentifier(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {

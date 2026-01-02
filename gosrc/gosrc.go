@@ -882,6 +882,18 @@ func CapitalizeFirstLetter(name string) string {
 	return string(first) + name[1:]
 }
 
+// LowercaseFirstLetter lowercases the first letter of a string
+func LowercaseFirstLetter(name string) string {
+	if len(name) == 0 {
+		return name
+	}
+	first := name[0]
+	if first >= 'A' && first <= 'Z' {
+		first = first - 'A' + 'a'
+	}
+	return string(first) + name[1:]
+}
+
 // AddComments adds comment lines to a string builder
 func AddComments(sb *strings.Builder, comments []string) {
 	for _, comment := range comments {

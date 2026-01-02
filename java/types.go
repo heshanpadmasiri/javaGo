@@ -116,11 +116,19 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 			goType = "internal." + typeName
 			return gosrc.Type(goType), true
 		}
+		// FIXME: extract this to a method
 		switch typeName {
 		case "Object":
 			goType = "interface{}"
 		case "String":
 			goType = "string"
+		case "Integer":
+			goType = "int"
+		case "Long":
+			goType = "int64"
+		case "Boolean":
+			goType = "bool"
+		// TODO: instead of hardcoding these make is possible to supply them using config
 		case "DiagnosticCode":
 			goType = "diagnostics.DiagnosticCode"
 		case "SyntaxKind":
@@ -148,6 +156,12 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 			goType = "interface{}"
 		case "String":
 			goType = "string"
+		case "Integer":
+			goType = "int"
+		case "Long":
+			goType = "int64"
+		case "Boolean":
+			goType = "bool"
 		case "DiagnosticCode":
 			goType = "diagnostics.DiagnosticCode"
 		case "SyntaxKind":
@@ -198,6 +212,18 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 				return gosrc.Type("[]interface{}"), true
 			}
 			return gosrc.Type("[]" + typeParams[0]), true
+		// Map types
+		case "HashMap":
+			fallthrough
+		case "Map":
+			Assert("Map can have at most two type params", len(typeParams) < 3)
+			if len(typeParams) == 0 {
+				return gosrc.Type("map[interface{}]interface{}"), true
+			}
+			if len(typeParams) == 1 {
+				return gosrc.Type("map[" + typeParams[0] + "]interface{}"), true
+			}
+			return gosrc.Type("map[" + typeParams[0] + "]" + typeParams[1]), true
 		default:
 			diagnostics.Fatal(node.ToSexp(), errors.New("unhandled generic type : "+typeName))
 		}

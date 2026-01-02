@@ -81,6 +81,7 @@ func TestMigration(t *testing.T) {
 				JavaSource:      javaContent,
 				AbstractClasses: make(map[string]bool),
 				EnumConstants:   make(map[string]string),
+				Constructors:    make(map[gosrc.Type][]java.FunctionData),
 			}
 			java.MigrateTree(ctx, tree)
 			config := gosrc.Config{
@@ -218,6 +219,7 @@ license_header = """// Copyright 2024 Test Company
 				JavaSource:      javaContent,
 				AbstractClasses: make(map[string]bool),
 				EnumConstants:   make(map[string]string),
+				Constructors:    make(map[gosrc.Type][]java.FunctionData),
 			}
 			java.MigrateTree(ctx, tree)
 
