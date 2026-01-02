@@ -5,3 +5,8 @@ type Person struct {
 	Age    int
 	Active bool
 }
+
+func NewPerson() Person {
+	this := Person{}
+	return this
+}

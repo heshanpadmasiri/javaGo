@@ -10,11 +10,6 @@ import (
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-const (
-	SELF_REF     = "this"
-	PACKAGE_NAME = "converted"
-)
-
 // MigrationContext holds state during Java to Go migration
 type MigrationContext struct {
 	Source            gosrc.GoSource
@@ -24,12 +19,18 @@ type MigrationContext struct {
 	InDefaultMethod   bool
 	DefaultMethodSelf string
 	EnumConstants     map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
+	Constructors      map[gosrc.Type][]FunctionData
+}
+
+type FunctionData struct {
+	Name          string
+	ArgumentTypes []gosrc.Type
 }
 
 // LoadConfig loads migration configuration from Config.toml
 func LoadConfig() gosrc.Config {
 	config := gosrc.Config{
-		PackageName:   PACKAGE_NAME,
+		PackageName:   gosrc.PackageName,
 		LicenseHeader: "",
 	}
 

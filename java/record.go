@@ -58,8 +58,8 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 					// Record fields should be slices directly
 					fieldName := nameNode.Utf8Text(ctx.JavaSource)
 					fields = append(fields, gosrc.StructField{
-						Name: fieldName,
-						Ty: ty,
+						Name:     fieldName,
+						Ty:       ty,
 						Public:   true, // All record fields must be public
 						Comments: []string{},
 					})
@@ -95,7 +95,7 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 				compactConstructor := convertCompactConstructor(ctx, fields, structName, compactConstructorNode)
 				ctx.Source.Functions = append(ctx.Source.Functions, compactConstructor)
 			}
-			result := convertClassBody(ctx, recordName, child, false)
+			result := convertClassBody(ctx, recordName, child, false, modifiers.isPublic())
 			// Add any additional fields from the body
 			fields = append(fields, result.Fields...)
 			// Add methods with the record as receiver, converting field references
@@ -103,8 +103,8 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 			for i := range result.Methods {
 				method := &result.Methods[i]
 				method.Receiver = gosrc.Param{
-					Name: SELF_REF,
-					Ty: gosrc.Type("*" + structName),
+					Name: gosrc.SelfRef,
+					Ty:   gosrc.Type("*" + structName),
 				}
 				// Convert method body to use struct field names
 				method.Body = convertMethodBodyForRecord(ctx, method.Body, fieldNameMap)
@@ -127,7 +127,7 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 	// Create the struct with record components as fields
 	structName := gosrc.ToIdentifier(recordName, modifiers.isPublic())
 	ctx.Source.Structs = append(ctx.Source.Structs, gosrc.Struct{
-		Name: structName,
+		Name:     structName,
 		Fields:   fields,
 		Comments: comments,
 		Public:   modifiers&PUBLIC != 0,
@@ -138,8 +138,8 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 	for _, ifaceType := range implementedInterfaces {
 		// Create type assertion: var _ InterfaceName = &StructName{}
 		ctx.Source.Vars = append(ctx.Source.Vars, gosrc.ModuleVar{
-			Name: "_",
-			Ty: ifaceType,
+			Name:  "_",
+			Ty:    ifaceType,
 			Value: &gosrc.VarRef{Ref: "&" + structName + "{}"},
 		})
 	}
@@ -183,19 +183,19 @@ func convertStatementForRecord(ctx *MigrationContext, stmt gosrc.Statement, fiel
 			structFieldName := field.mapped
 			// Only replace if it's not already part of "this.field"
 			// Simple heuristic: replace if not preceded by "this."
-			replacement := SELF_REF + "." + structFieldName
+			replacement := gosrc.SelfRef + "." + structFieldName
 			// Use word boundary-aware replacement
 			// Replace standalone occurrences (not part of "this.field")
-			beforePattern := SELF_REF + "." + originalName
+			beforePattern := gosrc.SelfRef + "." + originalName
 			if !strings.Contains(source, beforePattern) {
 				// Replace bare field name with this.FieldName
 				// Be careful: only replace if it's a standalone identifier
 				// Simple approach: replace and then fix if we created "this.this.Field"
 				source = strings.ReplaceAll(source, originalName, replacement)
-				source = strings.ReplaceAll(source, SELF_REF+"."+SELF_REF+".", SELF_REF+".")
+				source = strings.ReplaceAll(source, gosrc.SelfRef+"."+gosrc.SelfRef+".", gosrc.SelfRef+".")
 			} else {
 				// Already has "this.field", just capitalize the field name
-				source = strings.ReplaceAll(source, beforePattern, SELF_REF+"."+structFieldName)
+				source = strings.ReplaceAll(source, beforePattern, gosrc.SelfRef+"."+structFieldName)
 			}
 		}
 		return &gosrc.GoStatement{Source: source}
@@ -214,7 +214,7 @@ func convertStatementForRecord(ctx *MigrationContext, stmt gosrc.Statement, fiel
 			ref = s.Ref
 		}
 		return &gosrc.AssignStatement{
-			Ref: ref,
+			Ref:   ref,
 			Value: convertExpressionForRecord(ctx, s.Value, fieldNameMap),
 		}
 	case *gosrc.IfStatement:
@@ -249,13 +249,13 @@ func convertExpressionForRecord(ctx *MigrationContext, expr gosrc.Expression, fi
 		// Check if this is a bare field reference that needs conversion
 		if structFieldName, ok := fieldNameMap[ref]; ok {
 			// Convert bare field reference to this.FieldName
-			return &gosrc.VarRef{Ref: SELF_REF + "." + structFieldName}
+			return &gosrc.VarRef{Ref: gosrc.SelfRef + "." + structFieldName}
 		}
 		// If it's already this.field, check if the field name needs capitalization
-		if strings.HasPrefix(ref, SELF_REF+".") {
-			fieldName := strings.TrimPrefix(ref, SELF_REF+".")
+		if strings.HasPrefix(ref, gosrc.SelfRef+".") {
+			fieldName := strings.TrimPrefix(ref, gosrc.SelfRef+".")
 			if structFieldName, ok := fieldNameMap[fieldName]; ok {
-				return &gosrc.VarRef{Ref: SELF_REF + "." + structFieldName}
+				return &gosrc.VarRef{Ref: gosrc.SelfRef + "." + structFieldName}
 			}
 		}
 		return e
@@ -296,7 +296,7 @@ func convertRecordComponentsToParams(components []gosrc.StructField) []gosrc.Par
 		}
 		params = append(params, gosrc.Param{
 			Name: component.Name,
-			Ty: ty,
+			Ty:   ty,
 		})
 	}
 	return params
@@ -308,7 +308,7 @@ func convertCompactConstructor(ctx *MigrationContext, recordComponents []gosrc.S
 	// Convert record components to parameters
 	params := convertRecordComponentsToParams(recordComponents)
 	// Initialize struct
-	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", SELF_REF, structName)})
+	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
 	// Process compact constructor body
 	IterateChilden(compactConstructorNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
@@ -330,11 +330,11 @@ func convertCompactConstructor(ctx *MigrationContext, recordComponents []gosrc.S
 		structFieldName := gosrc.ToIdentifier(component.Name, true) // Always public for records
 		paramName := component.Name
 		body = append(body, &gosrc.AssignStatement{
-			Ref: gosrc.VarRef{Ref: SELF_REF + "." + structFieldName},
+			Ref:   gosrc.VarRef{Ref: gosrc.SelfRef + "." + structFieldName},
 			Value: &gosrc.VarRef{Ref: paramName},
 		})
 	}
-	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: SELF_REF}})
+	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: gosrc.SelfRef}})
 	// Generate function Name: newStructNameFromParam1Param2...
 	nameBuilder := strings.Builder{}
 	nameBuilder.WriteString(gosrc.ToIdentifier("new", modifiers.isPublic()))
@@ -346,7 +346,7 @@ func convertCompactConstructor(ctx *MigrationContext, recordComponents []gosrc.S
 	name := nameBuilder.String()
 	retTy := gosrc.Type(structName)
 	return gosrc.Function{
-		Name: name,
+		Name:       name,
 		Params:     params,
 		ReturnType: &retTy,
 		Body:       body,
@@ -384,4 +384,3 @@ func convertCompactConstructorBody(ctx *MigrationContext, recordComponents []gos
 	})
 	return body
 }
-

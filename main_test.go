@@ -42,10 +42,10 @@ func formatGoCode(code string) (string, error) {
 
 func updateExpectedFile(goFile string, content string) error {
 	dir := filepath.Dir(goFile)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
-	return os.WriteFile(goFile, []byte(content), 0644)
+	return os.WriteFile(goFile, []byte(content), 0o644)
 }
 
 func TestMigration(t *testing.T) {
@@ -81,6 +81,7 @@ func TestMigration(t *testing.T) {
 				JavaSource:      javaContent,
 				AbstractClasses: make(map[string]bool),
 				EnumConstants:   make(map[string]string),
+				Constructors:    make(map[gosrc.Type][]java.FunctionData),
 			}
 			java.MigrateTree(ctx, tree)
 			config := gosrc.Config{
@@ -172,7 +173,7 @@ license_header = """// Copyright 2024 Test Company
 			name:                  "no_config_file",
 			configContent:         "",
 			createConfig:          false,
-			expectedPkg:           java.PACKAGE_NAME,
+			expectedPkg:           gosrc.PackageName,
 			expectedLicense:       "",
 			expectLicenseInOutput: false,
 		},
@@ -202,7 +203,7 @@ license_header = """// Copyright 2024 Test Company
 			// Create Config.toml if needed
 			if tt.createConfig {
 				configPath := filepath.Join(tmpDir, "Config.toml")
-				if err := os.WriteFile(configPath, []byte(tt.configContent), 0644); err != nil {
+				if err := os.WriteFile(configPath, []byte(tt.configContent), 0o644); err != nil {
 					t.Fatalf("Failed to write Config.toml: %v", err)
 				}
 			}
@@ -218,6 +219,7 @@ license_header = """// Copyright 2024 Test Company
 				JavaSource:      javaContent,
 				AbstractClasses: make(map[string]bool),
 				EnumConstants:   make(map[string]string),
+				Constructors:    make(map[gosrc.Type][]java.FunctionData),
 			}
 			java.MigrateTree(ctx, tree)
 
