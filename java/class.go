@@ -588,10 +588,18 @@ func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Nod
 	return fn, isStatic
 }
 
-func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (gosrc.Function, bool, bool) {
+type methodMetadata struct {
+	name       string
+	params     []gosrc.Param
+	returnTy   *gosrc.Type
+	isPublic   bool
+	isStatic   bool
+	isAbstract bool
+}
+
+func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
 	var modifiers modifiers
 	var params []gosrc.Param
-	var body []gosrc.Statement
 	var name string
 	var returnType *gosrc.Type
 	var hasThrows bool
@@ -610,11 +618,10 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 			name = child.Utf8Text(ctx.JavaSource)
 		case "void_type":
 			returnType = nil
-		case "block":
-			body = append(body, convertStatementBlock(ctx, child)...)
 		case "throws":
 			hasThrows = true
 		// ignored
+		case "block":
 		case ";":
 		case "line_comment":
 		case "block_comment":
@@ -636,18 +643,44 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 		}
 	}
 
-	isAbstract := modifiers&ABSTRACT != 0 && len(body) == 0
+	isAbstract := modifiers&ABSTRACT != 0
+	isStatic := modifiers&STATIC != 0
+
+	return methodMetadata{
+		name:       name,
+		params:     params,
+		returnTy:   returnType,
+		isPublic:   modifiers.isPublic(),
+		isStatic:   isStatic,
+		isAbstract: isAbstract,
+	}
+}
+
+func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (gosrc.Function, bool, bool) {
+	methodMetadata := parseMethodSignature(ctx, methodNode)
+	params := methodMetadata.params
+	name := methodMetadata.name
+	returnType := methodMetadata.returnTy
+	isAbstract := methodMetadata.isAbstract
+	isStatic := methodMetadata.isStatic
+	isPublic := methodMetadata.isPublic
+
+	var body []gosrc.Statement
+	blockNode := methodNode.ChildByFieldName("body")
+	if blockNode != nil {
+		body = convertStatementBlock(ctx, blockNode)
+	}
+
 	// If method is abstract and has no body, add panic statement (for non-abstract class methods)
 	if isAbstract && len(body) == 0 {
 		body = append(body, &gosrc.GoStatement{Source: "panic(\"implemented in concrete class\")"})
 	}
-	isStatic := modifiers&STATIC != 0
 	return gosrc.Function{
 		Name:       name,
 		Params:     params,
 		ReturnType: returnType,
 		Body:       body,
-		Public:     modifiers&PUBLIC != 0,
+		Public:     isPublic,
 	}, isStatic, isAbstract
 }
 
