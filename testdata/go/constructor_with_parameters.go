@@ -13,5 +13,6 @@ func NewPersonFromStringInt(name string, age int) person {
 }
 
 func Test() {
+	// migrated from constructor_with_parameters.java:10:5
 	p := NewPersonFromStringInt("Alice", 30)
 }

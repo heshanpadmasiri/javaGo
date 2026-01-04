@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/heshanpadmasiri/javaGo/diagnostics"
 	"github.com/heshanpadmasiri/javaGo/java"
@@ -22,7 +23,8 @@ func main() {
 	tree := java.ParseJava(javaSource)
 	defer tree.Close()
 
-	ctx := java.NewMigrationContext(javaSource)
+	sourceFileName := filepath.Base(sourcePath)
+	ctx := java.NewMigrationContext(javaSource, sourceFileName)
 	java.MigrateTree(ctx, tree)
 	goSource := ctx.Source.ToSource(config)
 	if destPath != nil {

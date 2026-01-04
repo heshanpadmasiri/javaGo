@@ -17,6 +17,7 @@ func NewContainerFromInt(i int) container {
 }
 
 func Test() {
+	// migrated from multiple_constructors_same_param_count.java:12:5
 	// FIXME: more than one possible constructor for Container
 
 	c := NewContainerFromString("test")

@@ -17,5 +17,6 @@ func NewPerson() Person {
 }
 
 func (this *Person) Print() {
+	// migrated from record_implementing_interface.java:6:5
 	System.out.println(((("Person: " + name) + ", Age: ") + age))
 }

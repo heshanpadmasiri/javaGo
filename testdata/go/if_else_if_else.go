@@ -9,6 +9,7 @@ func newTest() test {
 }
 
 func (this *test) test() {
+	// migrated from if_else_if_else.java:2:5
 	if x > 0 {
 		this.positive()
 	} else if x < 0 {

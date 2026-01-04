@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) foo() {
+	// migrated from method_without_exceptions_control.java:2:5
 	System.out.println("test")
 }

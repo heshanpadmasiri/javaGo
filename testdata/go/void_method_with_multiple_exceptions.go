@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) foo() error {
+	// migrated from void_method_with_multiple_exceptions.java:2:5
 	System.out.println("test")
 }

@@ -9,6 +9,7 @@ func newTest() test {
 }
 
 func (this *test) test() {
+	// migrated from if_else_if_without_final_else.java:2:5
 	if x == 1 {
 		this.one()
 	} else if x == 2 {

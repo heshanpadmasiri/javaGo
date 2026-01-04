@@ -9,6 +9,7 @@ func newTest() test {
 }
 
 func (this *test) getCompletion(context ParserRuleContext, nextToken Token) Solution {
+	// migrated from single_catch_clause_with_illegalstateexception.java:2:5
 	tempCtxStack := this.ctxStack
 	this.ctxStack = this.getCtxStackSnapshot()
 	var sol Solution

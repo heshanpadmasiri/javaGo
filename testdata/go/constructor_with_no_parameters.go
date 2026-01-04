@@ -11,5 +11,6 @@ func NewPerson() person {
 }
 
 func Test() {
+	// migrated from constructor_with_no_parameters.java:8:5
 	p := NewPerson()
 }

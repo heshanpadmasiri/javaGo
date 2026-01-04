@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) foo() (int, error) {
+	// migrated from non_void_method_with_multiple_exceptions.java:2:5
 	return 42
 }

@@ -152,11 +152,15 @@ func convertMethodDeclarationToFunction(ctx *MigrationContext, methodNode *tree_
 		params = append([]gosrc.Param{thisParam}, params...)
 	}
 
+	// Add migration comment
+	migrationComment := getMigrationComment(ctx, methodNode)
+
 	return gosrc.Function{
 		Name:       gosrc.CapitalizeFirstLetter(name),
 		Params:     params,
 		ReturnType: returnType,
 		Body:       body,
 		Public:     true,
+		Comments:   []string{migrationComment},
 	}
 }

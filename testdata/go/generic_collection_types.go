@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) processList(items *[]String) {
+	// migrated from generic_collection_types.java:2:5
 	System.out.println(items)
 }

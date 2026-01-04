@@ -9,5 +9,6 @@ const (
 )
 
 func (this *Color) GetName() string {
+	// migrated from simple_enum_with_methods.java:6:5
 	return this.Name()
 }

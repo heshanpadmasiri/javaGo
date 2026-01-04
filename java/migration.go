@@ -17,6 +17,7 @@ import (
 type MigrationContext struct {
 	Source              gosrc.GoSource
 	JavaSource          []byte
+	SourceFilePath      string // Path to the source Java file
 	InReturn            bool
 	AbstractClasses     map[string]bool
 	InDefaultMethod     bool
@@ -37,9 +38,10 @@ func (this FunctionData) sameArgs(other FunctionData) bool {
 }
 
 // NewMigrationContext creates and initializes a new MigrationContext
-func NewMigrationContext(javaSource []byte) *MigrationContext {
+func NewMigrationContext(javaSource []byte, sourceFilePath string) *MigrationContext {
 	return &MigrationContext{
 		JavaSource:          javaSource,
+		SourceFilePath:      sourceFilePath,
 		AbstractClasses:     make(map[string]bool),
 		EnumConstants:       make(map[string]string),
 		Constructors:        make(map[gosrc.Type][]FunctionData),
@@ -156,6 +158,15 @@ func addMethodToCtxInner(ctx *MigrationContext, fn FunctionData) (string, bool) 
 	fn.Name = overloadedName
 	ctx.Methods[baseName] = append(currentMethods, fn)
 	return overloadedName, true
+}
+
+// getMigrationComment creates a comment indicating the source location in the Java file
+func getMigrationComment(ctx *MigrationContext, node *tree_sitter.Node) string {
+	pos := node.StartPosition()
+	// Convert from 0-based to 1-based
+	row := pos.Row + 1
+	col := pos.Column + 1
+	return fmt.Sprintf("migrated from %s:%d:%d", ctx.SourceFilePath, row, col)
 }
 
 // migrateNode dispatches node migration based on node kind

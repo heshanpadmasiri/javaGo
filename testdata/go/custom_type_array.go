@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) process(ctxs *[]Context) {
+	// migrated from custom_type_array.java:2:5
 	System.out.println(ctxs)
 }

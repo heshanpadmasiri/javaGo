@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) processArray(data *[]int) {
+	// migrated from simple_array_parameter.java:2:5
 	System.out.println(data)
 }
