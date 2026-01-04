@@ -9,5 +9,5 @@ func newTest() test {
 }
 
 func (this *test) processList(items *[]String) {
-	this.System.out.println(items)
+	System.out.println(items)
 }

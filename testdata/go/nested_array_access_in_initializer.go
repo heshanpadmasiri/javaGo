@@ -9,5 +9,5 @@ func newTest() test {
 }
 
 func (this *test) test() {
-	items := []interface{}{obj.field, this.another.method()}
+	items := []interface{}{obj.field, another.method()}
 }

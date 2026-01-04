@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
@@ -29,6 +30,10 @@ type MigrationContext struct {
 type FunctionData struct {
 	Name          string
 	ArgumentTypes []gosrc.Type
+}
+
+func (this FunctionData) sameArgs(other FunctionData) bool {
+	return slices.Equal(this.ArgumentTypes, other.ArgumentTypes)
 }
 
 // NewMigrationContext creates and initializes a new MigrationContext
@@ -91,6 +96,10 @@ func MigrateTree(ctx *MigrationContext, tree *tree_sitter.Tree) {
 
 // analyzeNode performs pre-migration analysis to collect method signatures
 func analyzeNode(ctx *MigrationContext, tree *tree_sitter.Tree) {
+	analyzeMethodDeclartions(ctx, tree)
+}
+
+func analyzeMethodDeclartions(ctx *MigrationContext, tree *tree_sitter.Tree) {
 	// Create query to find all method declarations
 	language := tree_sitter.NewLanguage(tree_sitter_java.Language())
 	query, err := tree_sitter.NewQuery(language, "(method_declaration) @method")
@@ -112,29 +121,41 @@ func analyzeNode(ctx *MigrationContext, tree *tree_sitter.Tree) {
 		for _, capture := range match.Captures {
 			methodNode := &capture.Node
 
-			// Parse method signature using existing function
+			// Parse method signature
 			methodMetadata := parseMethodSignature(ctx, methodNode)
+			funcData := methodMetadata.toFunctionData()
 
-			// Store in cache by node ID
-			nodeId := methodNode.Id()
-			ctx.MethodMetadataCache[nodeId] = methodMetadata
-
-			// Convert to FunctionData
-			var argTypes []gosrc.Type
-			for _, param := range methodMetadata.params {
-				argTypes = append(argTypes, param.Ty)
-			}
-
-			funcData := FunctionData{
-				Name:          methodMetadata.name,
-				ArgumentTypes: argTypes,
-			}
-
-			// Store in Methods map
-			methodName := methodMetadata.name
-			ctx.Methods[methodName] = append(ctx.Methods[methodName], funcData)
+			addMethodToCtx(ctx, funcData, methodMetadata, methodNode.Id())
 		}
 	}
+}
+
+func addMethodToCtx(ctx *MigrationContext, fn FunctionData, metadata methodMetadata, nodeID uintptr) {
+	name, shouldChangeName := addMethodToCtxInner(ctx, fn)
+	if shouldChangeName {
+		metadata.name = name
+	}
+	ctx.MethodMetadataCache[nodeID] = metadata
+}
+
+func addMethodToCtxInner(ctx *MigrationContext, fn FunctionData) (string, bool) {
+	currentMethods := ctx.Methods[fn.Name]
+	if len(currentMethods) == 0 {
+		ctx.Methods[fn.Name] = append(currentMethods, fn)
+		return fn.Name, false
+	}
+	// Check if we already have a matching method
+	for _, each := range currentMethods {
+		if each.sameArgs(fn) {
+			// No need to add we already have a mathching method
+			return each.Name, true
+		}
+	}
+	baseName := fn.Name
+	overloadedName := overloadedName(baseName, fn.ArgumentTypes)
+	fn.Name = overloadedName
+	ctx.Methods[baseName] = append(currentMethods, fn)
+	return overloadedName, true
 }
 
 // migrateNode dispatches node migration based on node kind

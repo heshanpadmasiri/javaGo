@@ -17,5 +17,5 @@ func NewPerson() Person {
 }
 
 func (this *Person) Print() {
-	this.System.out.println("Person: " + name + ", Age: " + age)
+	System.out.println(((("Person: " + name) + ", Age: ") + age))
 }

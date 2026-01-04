@@ -285,7 +285,7 @@ public class Calculator {
 	java.MigrateTree(ctx, tree)
 
 	// Test 1: Check 'add' method has 2 overloads
-	addMethods, hasAdd := ctx.Methods["add"]
+	addMethods, hasAdd := ctx.Methods["Add"]
 	if !hasAdd {
 		t.Error("Expected 'add' method to be tracked")
 	}
@@ -321,7 +321,7 @@ public class Calculator {
 	}
 
 	// Test 3: Check 'concat' method
-	concatMethods, hasConcat := ctx.Methods["concat"]
+	concatMethods, hasConcat := ctx.Methods["Concat"]
 	if !hasConcat {
 		t.Error("Expected 'concat' method to be tracked")
 	}
@@ -351,7 +351,7 @@ public class Calculator {
 	}
 
 	// Test 5: Check 'multiply' method (static method should also be tracked)
-	multiplyMethods, hasMultiply := ctx.Methods["multiply"]
+	multiplyMethods, hasMultiply := ctx.Methods["Multiply"]
 	if !hasMultiply {
 		t.Error("Expected 'multiply' method to be tracked")
 	}
@@ -418,7 +418,7 @@ public class Outer {
 	java.MigrateTree(ctx, tree)
 
 	// Test 1: Outer class methods
-	outerMethods, hasOuterMethod := ctx.Methods["outerMethod"]
+	outerMethods, hasOuterMethod := ctx.Methods["OuterMethod"]
 	if !hasOuterMethod {
 		t.Error("Expected 'outerMethod' to be tracked")
 	}
@@ -429,7 +429,7 @@ public class Outer {
 		t.Errorf("Expected 0 parameters for outerMethod, got %d", len(outerMethods[0].ArgumentTypes))
 	}
 
-	processMethods, hasProcess := ctx.Methods["process"]
+	processMethods, hasProcess := ctx.Methods["Process"]
 	if !hasProcess {
 		t.Error("Expected 'process' method to be tracked")
 	}
@@ -446,7 +446,7 @@ public class Outer {
 	}
 
 	// Test 2: Nested static class methods
-	nestedMethods, hasNestedMethod := ctx.Methods["nestedMethod"]
+	nestedMethods, hasNestedMethod := ctx.Methods["NestedMethod"]
 	if !hasNestedMethod {
 		t.Error("Expected 'nestedMethod' from nested static class to be tracked")
 	}
@@ -455,7 +455,7 @@ public class Outer {
 	}
 
 	// Test 3: Overloaded methods in nested class
-	convertMethods, hasConvert := ctx.Methods["convert"]
+	convertMethods, hasConvert := ctx.Methods["Convert"]
 	if !hasConvert {
 		t.Error("Expected 'convert' method from nested static class to be tracked")
 	}
@@ -486,7 +486,7 @@ public class Outer {
 	}
 
 	// Test 4: Nested inner class methods
-	innerMethods, hasInnerMethod := ctx.Methods["innerMethod"]
+	innerMethods, hasInnerMethod := ctx.Methods["InnerMethod"]
 	if !hasInnerMethod {
 		t.Error("Expected 'innerMethod' from nested inner class to be tracked")
 	}
@@ -504,7 +504,7 @@ public class Outer {
 	}
 
 	// Test 5: Enum methods
-	isActiveMethods, hasIsActive := ctx.Methods["isActive"]
+	isActiveMethods, hasIsActive := ctx.Methods["IsActive"]
 	if !hasIsActive {
 		t.Error("Expected 'isActive' method from enum to be tracked")
 	}
@@ -516,7 +516,7 @@ public class Outer {
 	}
 
 	// Test 6: Record methods
-	doubledMethods, hasDoubled := ctx.Methods["doubled"]
+	doubledMethods, hasDoubled := ctx.Methods["Doubled"]
 	if !hasDoubled {
 		t.Error("Expected 'doubled' method from record to be tracked")
 	}

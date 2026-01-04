@@ -9,5 +9,5 @@ func newTest() test {
 }
 
 func (this *test) process(ctxs *[]Context) {
-	this.System.out.println(ctxs)
+	System.out.println(ctxs)
 }

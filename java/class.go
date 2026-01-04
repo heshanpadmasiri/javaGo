@@ -460,6 +460,13 @@ func convertExpressionForDefaultMethod(ctx *MigrationContext, expr gosrc.Express
 	case *gosrc.CallExpression:
 		funcName := e.Function
 		funcName, isSelfMethodRef := strings.CutPrefix(funcName, "this.")
+
+		// Lookup converted method name for overloading
+		convertedFuncName, ok, _ := getConvertedMethodName(ctx, funcName, len(e.Args))
+		if ok {
+			funcName = convertedFuncName
+		}
+
 		if isSelfMethodRef {
 			funcName = ctx.DefaultMethodSelf + "." + gosrc.CapitalizeFirstLetter(funcName)
 		} else if funcName == "this" {
@@ -597,6 +604,18 @@ type methodMetadata struct {
 	isAbstract bool
 }
 
+func (methodMetadata methodMetadata) toFunctionData() FunctionData {
+	var argTypes []gosrc.Type
+	for _, param := range methodMetadata.params {
+		argTypes = append(argTypes, param.Ty)
+	}
+
+	return FunctionData{
+		Name:          methodMetadata.name,
+		ArgumentTypes: argTypes,
+	}
+}
+
 // getMethodMetadata retrieves cached method metadata.
 // Panics if metadata is not in cache (programming error).
 func getMethodMetadata(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
@@ -656,7 +675,7 @@ func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) m
 
 	isAbstract := modifiers&ABSTRACT != 0
 	isStatic := modifiers&STATIC != 0
-
+	name = gosrc.ToIdentifier(name, modifiers.isPublic())
 	return methodMetadata{
 		name:       name,
 		params:     params,

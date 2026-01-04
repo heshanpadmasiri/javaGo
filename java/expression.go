@@ -494,70 +494,69 @@ func convertMethodInvocation(ctx *MigrationContext, expression *tree_sitter.Node
 			Source: objectText,
 		}, nil
 	case "add":
-		// list.add(item) -> list = append(list, item)
-		// This needs to be handled as a statement, not an expression
-		// For now, return as Go expression that can be used in statements
-		argsNode := expression.ChildByFieldName("arguments")
-		var initStmts []gosrc.Statement
-		ref := gosrc.VarRef{Ref: objectText}
-		if argsNode != nil {
-			values := convertArgumentList(ctx, argsNode)
-			if len(values) > 0 {
-				var args []gosrc.Expression
-				args = append(args, &ref)
-				args = append(args, values...)
-				appendCall := &gosrc.CallExpression{Function: "append", Args: args}
-				initStmts = append(initStmts, &gosrc.AssignStatement{Ref: ref, Value: appendCall})
+		// Only handle collection.add() - not this.add()
+		if objectText != "this" {
+			argsNode := expression.ChildByFieldName("arguments")
+			var initStmts []gosrc.Statement
+			ref := gosrc.VarRef{Ref: objectText}
+			if argsNode != nil {
+				values := convertArgumentList(ctx, argsNode)
+				if len(values) > 0 {
+					var args []gosrc.Expression
+					args = append(args, &ref)
+					args = append(args, values...)
+					appendCall := &gosrc.CallExpression{Function: "append", Args: args}
+					initStmts = append(initStmts, &gosrc.AssignStatement{Ref: ref, Value: appendCall})
+				}
 			}
+			return &ref, initStmts
 		}
-		return &ref, initStmts
+		fallthrough
 	default:
-		// Handle method calls on this or other objects
-		if objectText == "this" || objectText == gosrc.SelfRef {
-			// Special handling for Java enum name() method
+		argsNode := expression.ChildByFieldName("arguments")
+		var args []gosrc.Expression
+		if argsNode != nil {
+			args = convertArgumentList(ctx, argsNode)
+		}
+
+		convertedName, found, multipleMatches := getConvertedMethodName(ctx, name, len(args))
+		if !found {
+			convertedName = name
+		}
+
+		var initStmts []gosrc.Statement
+		if multipleMatches {
+			comment := fmt.Sprintf("FIXME: more than one possible method for %s with %d arguments", name, len(args))
+			initStmts = append(initStmts, &gosrc.CommentStmt{Comments: []string{comment}})
+		}
+
+		if objectText == "this" && name == "name" {
 			if name == "name" {
-				// this.Name() -> this.Name() (will need a Name() method implementation)
 				return &gosrc.GoExpression{
 					Source: fmt.Sprintf("%s.Name()", gosrc.SelfRef),
 				}, nil
 			}
-			// gosrc.Method call on this - just capitalize method name
-			capitalizedName := gosrc.CapitalizeFirstLetter(name)
-			argsNode := expression.ChildByFieldName("arguments")
-			var argsStr string
-			if argsNode != nil {
-				args := convertArgumentList(ctx, argsNode)
-				argStrs := make([]string, len(args))
-				for i, arg := range args {
-					argStrs[i] = arg.ToSource()
-				}
-				argsStr = strings.Join(argStrs, ", ")
-			}
-			return &gosrc.GoExpression{
-				Source: fmt.Sprintf("%s.%s(%s)", gosrc.SelfRef, capitalizedName, argsStr),
-			}, nil
 		}
-		// Handle method calls on enum constants
 		if prefixedName, ok := ctx.EnumConstants[objectText]; ok {
-			// If objectText is an enum constant, prepend its prefixed name
-			return &gosrc.GoExpression{
-				Source: fmt.Sprintf("%s.%s", prefixedName, gosrc.CapitalizeFirstLetter(name)),
-			}, nil
+			// We turn these into methods on the enum type alias
+			fnName := prefixedName + "." + convertedName
+			callExpr := gosrc.CallExpression{
+				Function: fnName,
+				Args:     args,
+			}
+			return &callExpr, initStmts
 		}
-		// TODO: fix casts
-		// Fallback: convert the expression and clean up any this.this patterns
-		exprText := expression.Utf8Text(ctx.JavaSource)
-		// If expression already starts with "this.", don't prepend another "this."
-		if strings.HasPrefix(exprText, "this.") {
-			// Clean up any this.this patterns
-			exprText = strings.ReplaceAll(exprText, "this.this.", "this.")
-			return &gosrc.GoExpression{
-				Source: exprText,
-			}, nil
+		var fnName string
+		if objectText == "" {
+			fnName = gosrc.SelfRef + "." + convertedName
+		} else {
+			fnName = objectText + "." + convertedName
 		}
-		return &gosrc.GoExpression{
-			Source: gosrc.SelfRef + "." + exprText,
-		}, nil
+		callExpr := gosrc.CallExpression{
+			Function: fnName,
+			Args:     args,
+		}
+		return &callExpr, initStmts
 	}
 	// Fallback
 	return &gosrc.GoExpression{
@@ -637,6 +636,11 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gos
 		}
 		return &gosrc.IntLiteral{
 			Value: int(n),
+		}, nil
+	case "decimal_floating_point_literal":
+		// Parse floating point literal
+		return &gosrc.GoExpression{
+			Source: expression.Utf8Text(ctx.JavaSource),
 		}, nil
 	case "hex_integer_literal":
 		n, err := strconv.ParseInt(expression.Utf8Text(ctx.JavaSource), 0, 64)

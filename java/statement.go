@@ -232,10 +232,7 @@ func convertExpressionStatement(ctx *MigrationContext, stmtNode *tree_sitter.Nod
 		case "method_invocation":
 			expr, stmts := convertMethodInvocation(ctx, child)
 			body = append(body, stmts...)
-			if len(stmts) == 0 {
-				// No statements returned, wrap expression in CallStatement
-				body = append(body, &gosrc.CallStatement{Exp: expr})
-			}
+			body = append(body, &gosrc.CallStatement{Exp: expr})
 		// ignored
 		case ";":
 		default:

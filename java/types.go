@@ -174,6 +174,8 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 		return gosrc.TypeInt, true
 	case "boolean_type":
 		return gosrc.TypeBool, true
+	case "floating_point_type":
+		return gosrc.TypeFloat64, true
 	case "array_type":
 		typeNode := node.ChildByFieldName("element")
 		ty, ok := TryParseType(ctx, typeNode)

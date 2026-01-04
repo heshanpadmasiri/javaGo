@@ -17,5 +17,5 @@ func NewCircleFromInt(radius int) Circle {
 }
 
 func (this *Circle) Draw() {
-	this.System.out.println("Drawing circle with radius " + radius)
+	System.out.println(("Drawing circle with radius " + radius))
 }
