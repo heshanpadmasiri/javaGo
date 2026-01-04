@@ -14,15 +14,16 @@ import (
 
 // MigrationContext holds state during Java to Go migration
 type MigrationContext struct {
-	Source            gosrc.GoSource
-	JavaSource        []byte
-	InReturn          bool
-	AbstractClasses   map[string]bool
-	InDefaultMethod   bool
-	DefaultMethodSelf string
-	EnumConstants     map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
-	Constructors      map[gosrc.Type][]FunctionData
-	Methods           map[string][]FunctionData // Maps method name to method signatures
+	Source              gosrc.GoSource
+	JavaSource          []byte
+	InReturn            bool
+	AbstractClasses     map[string]bool
+	InDefaultMethod     bool
+	DefaultMethodSelf   string
+	EnumConstants       map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
+	Constructors        map[gosrc.Type][]FunctionData
+	Methods             map[string][]FunctionData  // Maps method name to method signatures
+	MethodMetadataCache map[uintptr]methodMetadata // Cache of parsed method signatures by node ID
 }
 
 type FunctionData struct {
@@ -33,11 +34,12 @@ type FunctionData struct {
 // NewMigrationContext creates and initializes a new MigrationContext
 func NewMigrationContext(javaSource []byte) *MigrationContext {
 	return &MigrationContext{
-		JavaSource:      javaSource,
-		AbstractClasses: make(map[string]bool),
-		EnumConstants:   make(map[string]string),
-		Constructors:    make(map[gosrc.Type][]FunctionData),
-		Methods:         make(map[string][]FunctionData),
+		JavaSource:          javaSource,
+		AbstractClasses:     make(map[string]bool),
+		EnumConstants:       make(map[string]string),
+		Constructors:        make(map[gosrc.Type][]FunctionData),
+		Methods:             make(map[string][]FunctionData),
+		MethodMetadataCache: make(map[uintptr]methodMetadata),
 	}
 }
 
@@ -112,6 +114,10 @@ func analyzeNode(ctx *MigrationContext, tree *tree_sitter.Tree) {
 
 			// Parse method signature using existing function
 			methodMetadata := parseMethodSignature(ctx, methodNode)
+
+			// Store in cache by node ID
+			nodeId := methodNode.Id()
+			ctx.MethodMetadataCache[nodeId] = methodMetadata
 
 			// Convert to FunctionData
 			var argTypes []gosrc.Type

@@ -80,7 +80,7 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 
 	// Generate Go interface with regular methods
 	goInterface := gosrc.Interface{
-		Name: gosrc.CapitalizeFirstLetter(interfaceName),
+		Name:     gosrc.CapitalizeFirstLetter(interfaceName),
 		Embeds:   superInterfaces,
 		Methods:  regularMethods,
 		Public:   true, // Java interfaces are always public
@@ -100,117 +100,46 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 }
 
 func extractInterfaceMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) gosrc.InterfaceMethod {
-	var name string
-	var params []gosrc.Param
-	var returnType *gosrc.Type
-	var hasThrows bool
-
-	IterateChilden(methodNode, func(child *tree_sitter.Node) {
-		ty, isType := TryParseType(ctx, child)
-		if isType {
-			returnType = &ty
-			return
-		}
-		switch child.Kind() {
-		case "identifier":
-			name = child.Utf8Text(ctx.JavaSource)
-		case "formal_parameters":
-			params = convertFormalParameters(ctx, child)
-		case "void_type":
-			returnType = nil
-		case "throws":
-			hasThrows = true
-		// ignored
-		case "modifiers":
-		case ";":
-		case "line_comment":
-		case "block_comment":
-		default:
-			UnhandledChild(ctx, child, "interface_method_signature")
-		}
-	})
-
-	// Handle throws clause - convert to error return
-	if hasThrows {
-		if returnType == nil {
-			// void method with exception -> error
-			errorType := gosrc.Type("error")
-			returnType = &errorType
-		} else {
-			// non-void method with exception -> (T, error)
-			tupleType := gosrc.Type("(" + returnType.ToSource() + ", error)")
-			returnType = &tupleType
-		}
-	}
+	// Use cached metadata
+	metadata := getMethodMetadata(ctx, methodNode)
 
 	return gosrc.InterfaceMethod{
-		Name: gosrc.CapitalizeFirstLetter(name),
-		Params:     params,
-		ReturnType: returnType,
+		Name:       gosrc.CapitalizeFirstLetter(metadata.name),
+		Params:     metadata.params,
+		ReturnType: metadata.returnTy,
 		Public:     true, // All interface methods are public
 	}
 }
 
 func convertMethodDeclarationToFunction(ctx *MigrationContext, methodNode *tree_sitter.Node, isDefault bool, interfaceName string) gosrc.Function {
-	var name string
-	var params []gosrc.Param
+	// Use cached metadata for signature
+	metadata := getMethodMetadata(ctx, methodNode)
+	name := metadata.name
+	params := metadata.params
+	returnType := metadata.returnTy
+
+	// Parse body using ChildByFieldName
 	var body []gosrc.Statement
-	var returnType *gosrc.Type
-	var hasThrows bool
+	blockNode := methodNode.ChildByFieldName("body")
+	if blockNode != nil {
+		if isDefault {
+			// Set context for default method conversion
+			oldInDefaultMethod := ctx.InDefaultMethod
+			oldDefaultMethodSelf := ctx.DefaultMethodSelf
+			ctx.InDefaultMethod = true
+			ctx.DefaultMethodSelf = "this"
 
-	IterateChilden(methodNode, func(child *tree_sitter.Node) {
-		ty, isType := TryParseType(ctx, child)
-		if isType {
-			returnType = &ty
-			return
-		}
-		switch child.Kind() {
-		case "identifier":
-			name = child.Utf8Text(ctx.JavaSource)
-		case "formal_parameters":
-			params = convertFormalParameters(ctx, child)
-		case "void_type":
-			returnType = nil
-		case "block":
-			// For default methods, we need to convert the body to capitalize method calls
-			if isDefault {
-				// Set context for default method conversion
-				oldInDefaultMethod := ctx.InDefaultMethod
-				oldDefaultMethodSelf := ctx.DefaultMethodSelf
-				ctx.InDefaultMethod = true
-				ctx.DefaultMethodSelf = "this"
-
-				// Convert block with empty field map (interfaces have no fields)
-				rawBody := convertStatementBlock(ctx, child)
-				for _, stmt := range rawBody {
-					body = append(body, convertStatementForDefaultMethod(ctx, stmt, interfaceName, make(map[string]bool)))
-				}
-
-				// Restore context
-				ctx.InDefaultMethod = oldInDefaultMethod
-				ctx.DefaultMethodSelf = oldDefaultMethodSelf
-			} else {
-				body = append(body, convertStatementBlock(ctx, child)...)
+			// Convert block with empty field map (interfaces have no fields)
+			rawBody := convertStatementBlock(ctx, blockNode)
+			for _, stmt := range rawBody {
+				body = append(body, convertStatementForDefaultMethod(ctx, stmt, interfaceName, make(map[string]bool)))
 			}
-		case "throws":
-			hasThrows = true
-		// ignored
-		case "modifiers":
-		case "line_comment":
-		case "block_comment":
-		default:
-			UnhandledChild(ctx, child, "interface_default_method")
-		}
-	})
 
-	// Handle throws clause
-	if hasThrows {
-		if returnType == nil {
-			errorType := gosrc.Type("error")
-			returnType = &errorType
+			// Restore context
+			ctx.InDefaultMethod = oldInDefaultMethod
+			ctx.DefaultMethodSelf = oldDefaultMethodSelf
 		} else {
-			tupleType := gosrc.Type("(" + returnType.ToSource() + ", error)")
-			returnType = &tupleType
+			body = convertStatementBlock(ctx, blockNode)
 		}
 	}
 
@@ -218,17 +147,16 @@ func convertMethodDeclarationToFunction(ctx *MigrationContext, methodNode *tree_
 	if isDefault {
 		thisParam := gosrc.Param{
 			Name: "this",
-			Ty: gosrc.Type(gosrc.CapitalizeFirstLetter(interfaceName)),
+			Ty:   gosrc.Type(gosrc.CapitalizeFirstLetter(interfaceName)),
 		}
 		params = append([]gosrc.Param{thisParam}, params...)
 	}
 
 	return gosrc.Function{
-		Name: gosrc.CapitalizeFirstLetter(name),
+		Name:       gosrc.CapitalizeFirstLetter(name),
 		Params:     params,
 		ReturnType: returnType,
 		Body:       body,
 		Public:     true,
 	}
 }
-

@@ -597,6 +597,17 @@ type methodMetadata struct {
 	isAbstract bool
 }
 
+// getMethodMetadata retrieves cached method metadata.
+// Panics if metadata is not in cache (programming error).
+func getMethodMetadata(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
+	nodeId := methodNode.Id()
+	metadata, exists := ctx.MethodMetadataCache[nodeId]
+	if !exists {
+		panic(fmt.Sprintf("Method metadata not found in cache for node ID %d. This is a programming error - analyzeNode should have been called first.", nodeId))
+	}
+	return metadata
+}
+
 func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
 	var modifiers modifiers
 	var params []gosrc.Param
@@ -657,7 +668,7 @@ func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) m
 }
 
 func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (gosrc.Function, bool, bool) {
-	methodMetadata := parseMethodSignature(ctx, methodNode)
+	methodMetadata := getMethodMetadata(ctx, methodNode)
 	params := methodMetadata.params
 	name := methodMetadata.name
 	returnType := methodMetadata.returnTy
