@@ -9,5 +9,5 @@ func newTest() test {
 }
 
 func (this *test) combine(numbers ...int) {
-	this.System.out.println(numbers)
+	System.out.println(numbers)
 }

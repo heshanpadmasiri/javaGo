@@ -17,5 +17,5 @@ type TestMethods struct {
 }
 
 func (m *TestMethods) ConcreteMethod() {
-	m.Self.System.out.println("Concrete")
+	System.out.println("Concrete")
 }

@@ -460,6 +460,13 @@ func convertExpressionForDefaultMethod(ctx *MigrationContext, expr gosrc.Express
 	case *gosrc.CallExpression:
 		funcName := e.Function
 		funcName, isSelfMethodRef := strings.CutPrefix(funcName, "this.")
+
+		// Lookup converted method name for overloading
+		convertedFuncName, ok, _ := getConvertedMethodName(ctx, funcName, len(e.Args))
+		if ok {
+			funcName = convertedFuncName
+		}
+
 		if isSelfMethodRef {
 			funcName = ctx.DefaultMethodSelf + "." + gosrc.CapitalizeFirstLetter(funcName)
 		} else if funcName == "this" {
@@ -588,10 +595,41 @@ func convertMethodDeclaration(ctx *MigrationContext, methodNode *tree_sitter.Nod
 	return fn, isStatic
 }
 
-func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (gosrc.Function, bool, bool) {
+type methodMetadata struct {
+	name       string
+	params     []gosrc.Param
+	returnTy   *gosrc.Type
+	isPublic   bool
+	isStatic   bool
+	isAbstract bool
+}
+
+func (methodMetadata methodMetadata) toFunctionData() FunctionData {
+	var argTypes []gosrc.Type
+	for _, param := range methodMetadata.params {
+		argTypes = append(argTypes, param.Ty)
+	}
+
+	return FunctionData{
+		Name:          methodMetadata.name,
+		ArgumentTypes: argTypes,
+	}
+}
+
+// getMethodMetadata retrieves cached method metadata.
+// Panics if metadata is not in cache (programming error).
+func getMethodMetadata(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
+	nodeId := methodNode.Id()
+	metadata, exists := ctx.MethodMetadataCache[nodeId]
+	if !exists {
+		panic(fmt.Sprintf("Method metadata not found in cache for node ID %d. This is a programming error - analyzeNode should have been called first.", nodeId))
+	}
+	return metadata
+}
+
+func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
 	var modifiers modifiers
 	var params []gosrc.Param
-	var body []gosrc.Statement
 	var name string
 	var returnType *gosrc.Type
 	var hasThrows bool
@@ -610,11 +648,10 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 			name = child.Utf8Text(ctx.JavaSource)
 		case "void_type":
 			returnType = nil
-		case "block":
-			body = append(body, convertStatementBlock(ctx, child)...)
 		case "throws":
 			hasThrows = true
 		// ignored
+		case "block":
 		case ";":
 		case "line_comment":
 		case "block_comment":
@@ -636,18 +673,44 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 		}
 	}
 
-	isAbstract := modifiers&ABSTRACT != 0 && len(body) == 0
+	isAbstract := modifiers&ABSTRACT != 0
+	isStatic := modifiers&STATIC != 0
+	name = gosrc.ToIdentifier(name, modifiers.isPublic())
+	return methodMetadata{
+		name:       name,
+		params:     params,
+		returnTy:   returnType,
+		isPublic:   modifiers.isPublic(),
+		isStatic:   isStatic,
+		isAbstract: isAbstract,
+	}
+}
+
+func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (gosrc.Function, bool, bool) {
+	methodMetadata := getMethodMetadata(ctx, methodNode)
+	params := methodMetadata.params
+	name := methodMetadata.name
+	returnType := methodMetadata.returnTy
+	isAbstract := methodMetadata.isAbstract
+	isStatic := methodMetadata.isStatic
+	isPublic := methodMetadata.isPublic
+
+	var body []gosrc.Statement
+	blockNode := methodNode.ChildByFieldName("body")
+	if blockNode != nil {
+		body = convertStatementBlock(ctx, blockNode)
+	}
+
 	// If method is abstract and has no body, add panic statement (for non-abstract class methods)
 	if isAbstract && len(body) == 0 {
 		body = append(body, &gosrc.GoStatement{Source: "panic(\"implemented in concrete class\")"})
 	}
-	isStatic := modifiers&STATIC != 0
 	return gosrc.Function{
 		Name:       name,
 		Params:     params,
 		ReturnType: returnType,
 		Body:       body,
-		Public:     modifiers&PUBLIC != 0,
+		Public:     isPublic,
 	}, isStatic, isAbstract
 }
 

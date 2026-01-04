@@ -9,5 +9,5 @@ func newTest() test {
 }
 
 func (this *test) checkFlags(flags *[]bool) {
-	this.System.out.println(flags)
+	System.out.println(flags)
 }

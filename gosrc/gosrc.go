@@ -873,6 +873,7 @@ func ToIdentifier(name string, public bool) string {
 	return string(first) + name[1:]
 }
 
+// TODO: move thse to a common string utils package
 // CapitalizeFirstLetter capitalizes the first letter of a string
 func CapitalizeFirstLetter(name string) string {
 	first := name[0]

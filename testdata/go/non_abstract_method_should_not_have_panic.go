@@ -9,5 +9,5 @@ func newTest() test {
 }
 
 func (this *test) DoSomething() {
-	this.System.out.println("Hello")
+	System.out.println("Hello")
 }

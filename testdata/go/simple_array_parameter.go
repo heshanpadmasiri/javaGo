@@ -9,5 +9,5 @@ func newTest() test {
 }
 
 func (this *test) processArray(data *[]int) {
-	this.System.out.println(data)
+	System.out.println(data)
 }

@@ -142,3 +142,39 @@ func tryGuessOverloadedMethod(methods []FunctionData, nParams int) (string, bool
 	}
 	return name, name != defaultName, multipeMatch
 }
+
+func overloadedName(baseName string, args []gosrc.Type) string {
+	if len(args) == 0 {
+		return baseName + "WithoutArgs"
+	}
+	nameBuilder := strings.Builder{}
+	nameBuilder.WriteString(baseName)
+	nameBuilder.WriteString("With")
+	for _, ty := range args {
+		nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(ty.ToSource()))
+	}
+	return nameBuilder.String()
+}
+
+// getConvertedMethodName looks up the converted method name for an invocation
+// Handles overloaded method resolution by argument count
+// Returns: (convertedName, found, multipleMatches)
+func getConvertedMethodName(ctx *MigrationContext, methodName string, argCount int) (string, bool, bool) {
+	methods, exists := ctx.Methods[methodName]
+	if !exists {
+		// Maybe it is public?
+		methods, exists = ctx.Methods[gosrc.ToIdentifier(methodName, true)]
+		if !exists {
+			// Method not tracked - use original name
+			return methodName, false, false
+		}
+	}
+
+	if len(methods) == 1 {
+		// No overloading - return the single method name
+		return methods[0].Name, true, false
+	}
+
+	// Multiple methods - try to guess by argument count
+	return tryGuessOverloadedMethod(methods, argCount)
+}
