@@ -30,6 +30,17 @@ type FunctionData struct {
 	ArgumentTypes []gosrc.Type
 }
 
+// NewMigrationContext creates and initializes a new MigrationContext
+func NewMigrationContext(javaSource []byte) *MigrationContext {
+	return &MigrationContext{
+		JavaSource:      javaSource,
+		AbstractClasses: make(map[string]bool),
+		EnumConstants:   make(map[string]string),
+		Constructors:    make(map[gosrc.Type][]FunctionData),
+		Methods:         make(map[string][]FunctionData),
+	}
+}
+
 // LoadConfig loads migration configuration from Config.toml
 func LoadConfig() gosrc.Config {
 	config := gosrc.Config{

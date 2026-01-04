@@ -77,13 +77,7 @@ func TestMigration(t *testing.T) {
 			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := &java.MigrationContext{
-				JavaSource:      javaContent,
-				AbstractClasses: make(map[string]bool),
-				EnumConstants:   make(map[string]string),
-				Constructors:    make(map[gosrc.Type][]java.FunctionData),
-				Methods:         make(map[string][]java.FunctionData),
-			}
+			ctx := java.NewMigrationContext(javaContent)
 			java.MigrateTree(ctx, tree)
 			config := gosrc.Config{
 				PackageName:   "converted",
@@ -216,13 +210,7 @@ license_header = """// Copyright 2024 Test Company
 			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := &java.MigrationContext{
-				JavaSource:      javaContent,
-				AbstractClasses: make(map[string]bool),
-				EnumConstants:   make(map[string]string),
-				Constructors:    make(map[gosrc.Type][]java.FunctionData),
-				Methods:         make(map[string][]java.FunctionData),
-			}
+			ctx := java.NewMigrationContext(javaContent)
 			java.MigrateTree(ctx, tree)
 
 			// Load config (should read from Config.toml in current directory)
@@ -292,13 +280,7 @@ public class Calculator {
 	tree := java.ParseJava(javaSource)
 	defer tree.Close()
 
-	ctx := &java.MigrationContext{
-		JavaSource:      javaSource,
-		AbstractClasses: make(map[string]bool),
-		EnumConstants:   make(map[string]string),
-		Constructors:    make(map[gosrc.Type][]java.FunctionData),
-		Methods:         make(map[string][]java.FunctionData),
-	}
+	ctx := java.NewMigrationContext(javaSource)
 
 	java.MigrateTree(ctx, tree)
 
@@ -431,13 +413,7 @@ public class Outer {
 	tree := java.ParseJava(javaSource)
 	defer tree.Close()
 
-	ctx := &java.MigrationContext{
-		JavaSource:      javaSource,
-		AbstractClasses: make(map[string]bool),
-		EnumConstants:   make(map[string]string),
-		Constructors:    make(map[gosrc.Type][]java.FunctionData),
-		Methods:         make(map[string][]java.FunctionData),
-	}
+	ctx := java.NewMigrationContext(javaSource)
 
 	java.MigrateTree(ctx, tree)
 
