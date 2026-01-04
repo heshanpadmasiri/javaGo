@@ -72,7 +72,7 @@ func (b *Bar) F() int {
 }
 ```
 
-### Overloading (NOT IMPLEMENTED YET)
+### Overloading
 
 - For overloading we need to generate different methods based on the parameter types.
 
