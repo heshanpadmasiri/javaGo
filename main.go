@@ -28,6 +28,7 @@ func main() {
 		AbstractClasses: make(map[string]bool),
 		EnumConstants:   make(map[string]string),
 		Constructors:    make(map[gosrc.Type][]java.FunctionData),
+		Methods:         make(map[string][]java.FunctionData),
 	}
 	java.MigrateTree(ctx, tree)
 	goSource := ctx.Source.ToSource(config)

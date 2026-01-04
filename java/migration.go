@@ -1,6 +1,7 @@
 package java
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -8,6 +9,7 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
+	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 )
 
 // MigrationContext holds state during Java to Go migration
@@ -20,6 +22,7 @@ type MigrationContext struct {
 	DefaultMethodSelf string
 	EnumConstants     map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
 	Constructors      map[gosrc.Type][]FunctionData
+	Methods           map[string][]FunctionData // Maps method name to method signatures
 }
 
 type FunctionData struct {
@@ -65,8 +68,56 @@ func LoadConfig() gosrc.Config {
 
 // MigrateTree migrates a Java tree-sitter tree to Go source
 func MigrateTree(ctx *MigrationContext, tree *tree_sitter.Tree) {
+	// Analyze tree first to collect method metadata
+	analyzeNode(ctx, tree)
+
+	// Then perform migration
 	root := tree.RootNode()
 	migrateNode(ctx, root)
+}
+
+// analyzeNode performs pre-migration analysis to collect method signatures
+func analyzeNode(ctx *MigrationContext, tree *tree_sitter.Tree) {
+	// Create query to find all method declarations
+	language := tree_sitter.NewLanguage(tree_sitter_java.Language())
+	query, err := tree_sitter.NewQuery(language, "(method_declaration) @method")
+	if err != nil {
+		// This is a programming error - the query syntax is invalid
+		panic(fmt.Sprintf("Invalid tree-sitter query: %v", err))
+	}
+	defer query.Close()
+
+	// Execute query
+	cursor := tree_sitter.NewQueryCursor()
+	defer cursor.Close()
+
+	root := tree.RootNode()
+	matches := cursor.Matches(query, root, ctx.JavaSource)
+
+	// Process each match
+	for match := matches.Next(); match != nil; match = matches.Next() {
+		for _, capture := range match.Captures {
+			methodNode := &capture.Node
+
+			// Parse method signature using existing function
+			methodMetadata := parseMethodSignature(ctx, methodNode)
+
+			// Convert to FunctionData
+			var argTypes []gosrc.Type
+			for _, param := range methodMetadata.params {
+				argTypes = append(argTypes, param.Ty)
+			}
+
+			funcData := FunctionData{
+				Name:          methodMetadata.name,
+				ArgumentTypes: argTypes,
+			}
+
+			// Store in Methods map
+			methodName := methodMetadata.name
+			ctx.Methods[methodName] = append(ctx.Methods[methodName], funcData)
+		}
+	}
 }
 
 // migrateNode dispatches node migration based on node kind
