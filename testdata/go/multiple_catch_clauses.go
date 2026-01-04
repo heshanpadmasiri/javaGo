@@ -9,6 +9,7 @@ func newTest() test {
 }
 
 func (this *test) test() {
+	// migrated from multiple_catch_clauses.java:2:5
 	func() {
 		defer func() {
 			if r := recover(); r != nil {

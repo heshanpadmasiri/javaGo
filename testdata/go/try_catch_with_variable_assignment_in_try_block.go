@@ -9,6 +9,7 @@ func newTest() test {
 }
 
 func (this *test) calculate() int {
+	// migrated from try_catch_with_variable_assignment_in_try_block.java:2:5
 	var result int
 	func() {
 		defer func() {

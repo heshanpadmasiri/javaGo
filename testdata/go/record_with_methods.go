@@ -11,5 +11,6 @@ func NewPoint() Point {
 }
 
 func (this *Point) Distance() int {
+	// migrated from record_with_methods.java:2:5
 	return ((this.X * this.X) + (this.Y * this.Y))
 }

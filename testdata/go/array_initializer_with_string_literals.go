@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) test() {
+	// migrated from array_initializer_with_string_literals.java:2:5
 	names := []string{"Alice", "Bob", "Charlie"}
 }

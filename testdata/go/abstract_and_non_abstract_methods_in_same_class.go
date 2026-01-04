@@ -17,5 +17,6 @@ type TestMethods struct {
 }
 
 func (m *TestMethods) ConcreteMethod() {
+	// migrated from abstract_and_non_abstract_methods_in_same_class.java:3:5
 	System.out.println("Concrete")
 }

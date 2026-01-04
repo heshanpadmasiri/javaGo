@@ -28,5 +28,6 @@ func (b *FooBase) SetA(a int) {
 }
 
 func (m *FooMethods) B() int {
+	// migrated from abstract_class_with_fields_and_methods.java:4:5
 	return (m.Self.F() + m.Self.GetA())
 }

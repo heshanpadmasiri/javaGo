@@ -9,5 +9,6 @@ func newTest() test {
 }
 
 func (this *test) test() {
+	// migrated from empty_array_initializer.java:2:5
 	empty := []int{}
 }

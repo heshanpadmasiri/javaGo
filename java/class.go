@@ -705,12 +705,17 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 	if isAbstract && len(body) == 0 {
 		body = append(body, &gosrc.GoStatement{Source: "panic(\"implemented in concrete class\")"})
 	}
+
+	// Add migration comment
+	migrationComment := getMigrationComment(ctx, methodNode)
+
 	return gosrc.Function{
 		Name:       name,
 		Params:     params,
 		ReturnType: returnType,
 		Body:       body,
 		Public:     isPublic,
+		Comments:   []string{migrationComment},
 	}, isStatic, isAbstract
 }
 

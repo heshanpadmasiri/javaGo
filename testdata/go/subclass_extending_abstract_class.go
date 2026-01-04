@@ -38,9 +38,11 @@ func (b *FooBase) SetA(a int) {
 }
 
 func (m *FooMethods) B() int {
+	// migrated from subclass_extending_abstract_class.java:4:5
 	return (m.Self.F() + m.Self.GetA())
 }
 
 func (b *Bar) F() int {
+	// migrated from subclass_extending_abstract_class.java:9:5
 	return 42
 }

@@ -9,6 +9,7 @@ func newTest() test {
 }
 
 func (this *test) test(parentCtx ParserRuleContext) {
+	// migrated from array_initializer_in_assignment_ballerina_parser_error_handler_case.java:2:5
 	alternatives := nil
 	switch parentCtx {
 	case ARG_LIST:

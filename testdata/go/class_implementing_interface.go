@@ -17,5 +17,6 @@ func NewCircleFromInt(radius int) Circle {
 }
 
 func (this *Circle) Draw() {
+	// migrated from class_implementing_interface.java:12:5
 	System.out.println(("Drawing circle with radius " + radius))
 }

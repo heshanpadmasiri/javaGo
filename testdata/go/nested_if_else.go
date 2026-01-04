@@ -9,6 +9,7 @@ func newTest() test {
 }
 
 func (this *test) test() {
+	// migrated from nested_if_else.java:2:5
 	if x {
 		if y {
 			this.a()
