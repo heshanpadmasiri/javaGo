@@ -616,6 +616,25 @@ func (methodMetadata methodMetadata) toFunctionData() FunctionData {
 	}
 }
 
+type constructorMetadata struct {
+	structName string
+	params     []gosrc.Param
+	isPublic   bool
+	name       string // The Go constructor function name
+}
+
+func (constructorMetadata constructorMetadata) toFunctionData() FunctionData {
+	var argTypes []gosrc.Type
+	for _, param := range constructorMetadata.params {
+		argTypes = append(argTypes, param.Ty)
+	}
+
+	return FunctionData{
+		Name:          constructorMetadata.name,
+		ArgumentTypes: argTypes,
+	}
+}
+
 // getMethodMetadata retrieves cached method metadata.
 // Panics if metadata is not in cache (programming error).
 func getMethodMetadata(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
@@ -686,6 +705,42 @@ func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) m
 	}
 }
 
+func parseConstructorSignature(ctx *MigrationContext, constructorNode *tree_sitter.Node) constructorMetadata {
+	var modifiers modifiers
+	var params []gosrc.Param
+	var structName string
+	
+	IterateChilden(constructorNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "modifiers":
+			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
+		case "formal_parameters":
+			params = convertFormalParameters(ctx, child)
+		case "identifier":
+			structName = child.Utf8Text(ctx.JavaSource)
+		// ignored
+		case "constructor_body":
+		case "line_comment":
+		case "block_comment":
+		default:
+			UnhandledChild(ctx, child, "constructor_declaration")
+		}
+	})
+	
+	// Convert struct name using identifier rules
+	structName = gosrc.ToIdentifier(structName, modifiers.isPublic())
+	
+	// Generate constructor name (will be stored in metadata)
+	name := constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
+	
+	return constructorMetadata{
+		structName: structName,
+		params:     params,
+		isPublic:   modifiers.isPublic(),
+		name:       name,
+	}
+}
+
 func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (gosrc.Function, bool, bool) {
 	methodMetadata := getMethodMetadata(ctx, methodNode)
 	params := methodMetadata.params
@@ -722,33 +777,71 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, structName string, constructorNode *tree_sitter.Node, isPublicClass bool) gosrc.Function {
 	var modifiers modifiers
 	var params []gosrc.Param
+	var name string
 	var body []gosrc.Statement
-	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
-	IterateChilden(constructorNode, func(child *tree_sitter.Node) {
-		switch child.Kind() {
-		case "modifiers":
-			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
-		case "formal_parameters":
-			params = convertFormalParameters(ctx, child)
-		case "constructor_body":
-			body = append(body, convertConstructorBody(ctx, fieldInitValues, child)...)
-		// ignored
-		case "identifier":
-		case "line_comment":
-		case "block_comment":
-		default:
-			UnhandledChild(ctx, child, "constructor_declaration")
+	
+	// Use cached metadata if available (when constructorNode is not nil)
+	if constructorNode != nil {
+		metadata, hasCached := ctx.ConstructorMetadataCache[constructorNode.Id()]
+		if hasCached {
+			// Use cached metadata
+			params = metadata.params
+			name = metadata.name
+			modifiers = PUBLIC
+			if !metadata.isPublic {
+				modifiers = 0
+			}
+		} else {
+			// Fallback: parse inline (this shouldn't happen if analyzeNode was called)
+			IterateChilden(constructorNode, func(child *tree_sitter.Node) {
+				switch child.Kind() {
+				case "modifiers":
+					modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
+				case "formal_parameters":
+					params = convertFormalParameters(ctx, child)
+				// ignored
+				case "identifier":
+				case "constructor_body":
+				case "line_comment":
+				case "block_comment":
+				default:
+					UnhandledChild(ctx, child, "constructor_declaration")
+				}
+			})
+			name = constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
 		}
-	})
-	if constructorNode == nil {
+	} else {
 		// Default constructor - use class visibility
 		if isPublicClass {
 			modifiers = PUBLIC
 		}
+		name = constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
+	}
+	
+	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
+	
+	// Process constructor body if present
+	if constructorNode != nil {
+		IterateChilden(constructorNode, func(child *tree_sitter.Node) {
+			switch child.Kind() {
+			case "constructor_body":
+				body = append(body, convertConstructorBody(ctx, fieldInitValues, child)...)
+			// ignored
+			case "modifiers":
+			case "formal_parameters":
+			case "identifier":
+			case "line_comment":
+			case "block_comment":
+			default:
+				UnhandledChild(ctx, child, "constructor_declaration")
+			}
+		})
+	} else {
+		// Default constructor
 		body = append(body, fieldInitStmts(fieldInitValues)...)
 	}
+	
 	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: gosrc.SelfRef}})
-	name := constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
 	retTy := gosrc.Type(structName)
 	return gosrc.Function{
 		Name:       name,
