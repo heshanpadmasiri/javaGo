@@ -24,7 +24,7 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 	var includes []gosrc.Type
 	var implementedInterfaces []gosrc.Type
 	isAbstract := false
-	IterateChilden(classNode, func(child *tree_sitter.Node) {
+	IterateChildren(classNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
@@ -40,10 +40,10 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 			}
 		case "super_interfaces":
 			// Parse implements clause - iterate through children to find type_list
-			IterateChilden(child, func(superinterfacesChild *tree_sitter.Node) {
+			IterateChildren(child, func(superinterfacesChild *tree_sitter.Node) {
 				if superinterfacesChild.Kind() == "type_list" {
 					// Iterate through the type_list to get individual types
-					IterateChilden(superinterfacesChild, func(typeChild *tree_sitter.Node) {
+					IterateChildren(superinterfacesChild, func(typeChild *tree_sitter.Node) {
 						ty, ok := TryParseType(ctx, typeChild)
 						if ok {
 							implementedInterfaces = append(implementedInterfaces, ty)
@@ -129,7 +129,7 @@ func convertAbstractClass(ctx *MigrationContext, className string, modifiers mod
 	var comments []string
 	fieldInitValues := map[string]gosrc.Expression{}
 
-	IterateChilden(classBody, func(child *tree_sitter.Node) {
+	IterateChildren(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "class_declaration":
 			migrateClassDeclaration(ctx, child)
@@ -529,7 +529,7 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 	var result classConversionResult
 	fieldInitValues := map[string]gosrc.Expression{}
 	hasConstructor := false
-	IterateChilden(classBody, func(child *tree_sitter.Node) {
+	IterateChildren(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "class_declaration":
 			migrateClassDeclaration(ctx, child)
@@ -652,7 +652,7 @@ func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) m
 	var name string
 	var returnType *gosrc.Type
 	var hasThrows bool
-	IterateChilden(methodNode, func(child *tree_sitter.Node) {
+	IterateChildren(methodNode, func(child *tree_sitter.Node) {
 		ty, isType := TryParseType(ctx, child)
 		if isType {
 			returnType = &ty
@@ -710,7 +710,7 @@ func parseConstructorSignature(ctx *MigrationContext, constructorNode *tree_sitt
 	var params []gosrc.Param
 	var structName string
 
-	IterateChilden(constructorNode, func(child *tree_sitter.Node) {
+	IterateChildren(constructorNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
@@ -827,7 +827,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 
 func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, bodyNode *tree_sitter.Node) []gosrc.Statement {
 	body := fieldInitStmts(fieldInitValues)
-	IterateChilden(bodyNode, func(child *tree_sitter.Node) {
+	IterateChildren(bodyNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "explicit_constructor_invocation":
 			body = append(body, convertExplicitConstructorInvocation(ctx, child)...)

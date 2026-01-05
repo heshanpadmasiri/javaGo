@@ -18,7 +18,7 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 	var comments []string
 	var implementedInterfaces []gosrc.Type
 
-	IterateChilden(recordNode, func(child *tree_sitter.Node) {
+	IterateChildren(recordNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
@@ -26,10 +26,10 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 			recordName = child.Utf8Text(ctx.JavaSource)
 		case "super_interfaces":
 			// Parse implements clause - iterate through children to find type_list
-			IterateChilden(child, func(superinterfacesChild *tree_sitter.Node) {
+			IterateChildren(child, func(superinterfacesChild *tree_sitter.Node) {
 				if superinterfacesChild.Kind() == "type_list" {
 					// Iterate through the type_list to get individual types
-					IterateChilden(superinterfacesChild, func(typeChild *tree_sitter.Node) {
+					IterateChildren(superinterfacesChild, func(typeChild *tree_sitter.Node) {
 						ty, ok := TryParseType(ctx, typeChild)
 						if ok {
 							implementedInterfaces = append(implementedInterfaces, ty)
@@ -39,7 +39,7 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 			})
 		case "formal_parameters":
 			// Record components are in formal_parameters
-			IterateChilden(child, func(paramChild *tree_sitter.Node) {
+			IterateChildren(child, func(paramChild *tree_sitter.Node) {
 				switch paramChild.Kind() {
 				case "formal_parameter":
 					typeNode := paramChild.ChildByFieldName("type")
@@ -84,7 +84,7 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 			}
 			// Extract compact constructor before processing class body
 			var compactConstructorNode *tree_sitter.Node
-			IterateChilden(child, func(bodyChild *tree_sitter.Node) {
+			IterateChildren(child, func(bodyChild *tree_sitter.Node) {
 				if bodyChild.Kind() == "compact_constructor_declaration" {
 					compactConstructorNode = bodyChild
 				}
@@ -310,7 +310,7 @@ func convertCompactConstructor(ctx *MigrationContext, recordComponents []gosrc.S
 	// Initialize struct
 	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
 	// Process compact constructor body
-	IterateChilden(compactConstructorNode, func(child *tree_sitter.Node) {
+	IterateChildren(compactConstructorNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
@@ -361,7 +361,7 @@ func convertCompactConstructorBody(ctx *MigrationContext, recordComponents []gos
 	// - Explicit constructor invocations (this(...) or super(...))
 	// - Explicit assignments to component fields (they're implicit)
 	// The body can contain validation/normalization logic that modifies parameters
-	IterateChilden(bodyNode, func(child *tree_sitter.Node) {
+	IterateChildren(bodyNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		// Handle all statement types by delegating to convertStatement
 		case "if_statement", "expression_statement", "local_variable_declaration",

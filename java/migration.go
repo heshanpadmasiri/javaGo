@@ -213,7 +213,7 @@ func getMigrationComment(ctx *MigrationContext, node *tree_sitter.Node) string {
 func migrateNode(ctx *MigrationContext, node *tree_sitter.Node) {
 	switch node.Kind() {
 	case "program":
-		IterateChilden(node, func(child *tree_sitter.Node) {
+		IterateChildren(node, func(child *tree_sitter.Node) {
 			migrateNode(ctx, child)
 		})
 	case "class_declaration":

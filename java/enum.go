@@ -50,7 +50,7 @@ func extractEnumConstant(ctx *MigrationContext, node *tree_sitter.Node) *EnumCon
 
 	// Third try: Iterate children looking for identifier node
 	var constantName string
-	IterateChilden(node, func(child *tree_sitter.Node) {
+	IterateChildren(node, func(child *tree_sitter.Node) {
 		if child.Kind() == "identifier" && constantName == "" {
 			constantName = child.Utf8Text(ctx.JavaSource)
 		}
@@ -74,7 +74,7 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 	var enumBody *tree_sitter.Node
 	var hasFields bool
 
-	IterateChilden(enumNode, func(child *tree_sitter.Node) {
+	IterateChildren(enumNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
@@ -82,7 +82,7 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 			enumName = child.Utf8Text(ctx.JavaSource)
 		case "enum_constants":
 			// Parse enum constants list
-			IterateChilden(child, func(constantChild *tree_sitter.Node) {
+			IterateChildren(child, func(constantChild *tree_sitter.Node) {
 				if enumConst := extractEnumConstant(ctx, constantChild); enumConst != nil {
 					enumConstants = append(enumConstants, *enumConst)
 				}
@@ -95,7 +95,7 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 		case "enum_body":
 			enumBody = child
 			// Parse constants and check for fields in the body
-			IterateChilden(child, func(bodyChild *tree_sitter.Node) {
+			IterateChildren(child, func(bodyChild *tree_sitter.Node) {
 				switch bodyChild.Kind() {
 				case "field_declaration":
 					hasFields = true
@@ -115,7 +115,7 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 					}
 				}
 				// Also check nested nodes for field_declaration (in case of nested structures)
-				IterateChildenWhile(bodyChild, func(nestedChild *tree_sitter.Node) bool {
+				IterateChildrenWhile(bodyChild, func(nestedChild *tree_sitter.Node) bool {
 					if nestedChild.Kind() == "field_declaration" {
 						hasFields = true
 						return false
@@ -129,7 +129,7 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 			if enumBody == nil {
 				enumBody = child
 				// Parse constants and check for fields in the body
-				IterateChilden(child, func(bodyChild *tree_sitter.Node) {
+				IterateChildren(child, func(bodyChild *tree_sitter.Node) {
 					switch bodyChild.Kind() {
 					case "field_declaration":
 						hasFields = true
@@ -155,7 +155,7 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 			if enumBody == nil {
 				enumBody = child
 				// Parse constants and check for fields in the body
-				IterateChilden(child, func(bodyChild *tree_sitter.Node) {
+				IterateChildren(child, func(bodyChild *tree_sitter.Node) {
 					if bodyChild.Kind() == "field_declaration" {
 						hasFields = true
 					} else if bodyChild.Kind() == "enum_constant" {
@@ -203,7 +203,7 @@ func migrateEnumDeclaration(ctx *MigrationContext, enumNode *tree_sitter.Node) {
 
 	// Re-check for fields in enum body if we have one (fields might come after constants)
 	if enumBody != nil && !hasFields {
-		IterateChildenWhile(enumBody, func(bodyChild *tree_sitter.Node) bool {
+		IterateChildrenWhile(enumBody, func(bodyChild *tree_sitter.Node) bool {
 			if bodyChild.Kind() == "field_declaration" {
 				hasFields = true
 				return false
@@ -257,7 +257,7 @@ func convertSimpleEnum(ctx *MigrationContext, enumTypeName string, enumConstants
 		// Recursively find all method_declaration nodes
 		var findMethods func(node *tree_sitter.Node)
 		findMethods = func(node *tree_sitter.Node) {
-			IterateChilden(node, func(bodyChild *tree_sitter.Node) {
+			IterateChildren(node, func(bodyChild *tree_sitter.Node) {
 				switch bodyChild.Kind() {
 				case "method_declaration":
 					// Handle methods similar to class methods
@@ -302,7 +302,7 @@ func convertComplexEnum(ctx *MigrationContext, enumTypeName string, enumConstant
 	// Recursively find all field_declaration and method_declaration nodes
 	var findFieldsAndMethods func(node *tree_sitter.Node)
 	findFieldsAndMethods = func(node *tree_sitter.Node) {
-		IterateChilden(node, func(child *tree_sitter.Node) {
+		IterateChildren(node, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case "field_declaration":
 				field, _, _ := convertFieldDeclaration(ctx, child)

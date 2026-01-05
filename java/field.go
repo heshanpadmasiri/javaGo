@@ -11,7 +11,7 @@ import (
 
 func convertParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []gosrc.Param {
 	var params []gosrc.Param
-	IterateChilden(paramsNode, func(child *tree_sitter.Node) {
+	IterateChildren(paramsNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "formal_parameters":
 			params = append(params, convertFormalParameters(ctx, child)...)
@@ -24,7 +24,7 @@ func convertParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []go
 
 func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node) []gosrc.Param {
 	var params []gosrc.Param
-	IterateChilden(paramsNode, func(child *tree_sitter.Node) {
+	IterateChildren(paramsNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "formal_parameter":
 			typeNode := child.ChildByFieldName("type")
@@ -50,7 +50,7 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 		case "spread_parameter":
 			var ty gosrc.Type
 			var name string
-			IterateChilden(child, func(spreadChild *tree_sitter.Node) {
+			IterateChildren(child, func(spreadChild *tree_sitter.Node) {
 				switch spreadChild.Kind() {
 				case "variable_declarator":
 					nameNode := spreadChild.ChildByFieldName("name")
@@ -91,7 +91,7 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 	var name string
 	var comments []string
 	var initExpr gosrc.Expression
-	IterateChilden(fieldNode, func(child *tree_sitter.Node) {
+	IterateChildren(fieldNode, func(child *tree_sitter.Node) {
 		t, ok := TryParseType(ctx, child)
 		if ok {
 			ty = t
