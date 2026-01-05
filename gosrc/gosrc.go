@@ -252,6 +252,11 @@ type (
 		Value int
 	}
 
+	// Int64Literal represents a 64-bit integer literal
+	Int64Literal struct {
+		Value int64
+	}
+
 	// CharLiteral represents a character literal
 	CharLiteral struct {
 		Value string
@@ -816,6 +821,10 @@ func (e *BooleanLiteral) ToSource() string {
 
 func (e *IntLiteral) ToSource() string {
 	return fmt.Sprintf("%d", e.Value)
+}
+
+func (e *Int64Literal) ToSource() string {
+	return fmt.Sprintf("int64(%d)", e.Value)
 }
 
 func (e *CharLiteral) ToSource() string {
