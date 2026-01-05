@@ -630,9 +630,23 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gos
 			Value: false,
 		}, nil
 	case "decimal_integer_literal":
-		n, err := strconv.ParseInt(expression.Utf8Text(ctx.JavaSource), 10, 64)
+		text := expression.Utf8Text(ctx.JavaSource)
+		// Check if literal has L or l suffix (Java long literal)
+		isLong := false
+		if len(text) > 0 && (text[len(text)-1] == 'L' || text[len(text)-1] == 'l') {
+			isLong = true
+			text = text[:len(text)-1] // Strip the suffix
+		}
+
+		n, err := strconv.ParseInt(text, 10, 64)
 		if err != nil {
 			diagnostics.Fatal(expression.ToSexp(), err)
+		}
+
+		if isLong {
+			return &gosrc.Int64Literal{
+				Value: n,
+			}, nil
 		}
 		return &gosrc.IntLiteral{
 			Value: int(n),
@@ -643,9 +657,23 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gos
 			Source: expression.Utf8Text(ctx.JavaSource),
 		}, nil
 	case "hex_integer_literal":
-		n, err := strconv.ParseInt(expression.Utf8Text(ctx.JavaSource), 0, 64)
+		text := expression.Utf8Text(ctx.JavaSource)
+		// Check if literal has L or l suffix (Java long literal)
+		isLong := false
+		if len(text) > 0 && (text[len(text)-1] == 'L' || text[len(text)-1] == 'l') {
+			isLong = true
+			text = text[:len(text)-1] // Strip the suffix
+		}
+
+		n, err := strconv.ParseInt(text, 0, 64)
 		if err != nil {
 			diagnostics.Fatal(expression.ToSexp(), err)
+		}
+
+		if isLong {
+			return &gosrc.Int64Literal{
+				Value: n,
+			}, nil
 		}
 		return &gosrc.IntLiteral{
 			Value: int(n),
