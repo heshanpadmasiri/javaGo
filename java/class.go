@@ -709,7 +709,7 @@ func parseConstructorSignature(ctx *MigrationContext, constructorNode *tree_sitt
 	var modifiers modifiers
 	var params []gosrc.Param
 	var structName string
-	
+
 	IterateChilden(constructorNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
@@ -726,13 +726,13 @@ func parseConstructorSignature(ctx *MigrationContext, constructorNode *tree_sitt
 			UnhandledChild(ctx, child, "constructor_declaration")
 		}
 	})
-	
+
 	// Convert struct name using identifier rules
 	structName = gosrc.ToIdentifier(structName, modifiers.isPublic())
-	
+
 	// Generate constructor name (will be stored in metadata)
 	name := constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
-	
+
 	return constructorMetadata{
 		structName: structName,
 		params:     params,
@@ -779,7 +779,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 	var params []gosrc.Param
 	var name string
 	var body []gosrc.Statement
-	
+
 	// Use cached metadata if available (when constructorNode is not nil)
 	if constructorNode != nil {
 		metadata, hasCached := ctx.ConstructorMetadataCache[constructorNode.Id()]
@@ -800,9 +800,9 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 		}
 		name = constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
 	}
-	
+
 	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
-	
+
 	// Process constructor body if present
 	if constructorNode != nil {
 		bodyNode := constructorNode.ChildByFieldName("body")
@@ -813,7 +813,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 		// Default constructor
 		body = append(body, fieldInitStmts(fieldInitValues)...)
 	}
-	
+
 	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: gosrc.SelfRef}})
 	retTy := gosrc.Type(structName)
 	return gosrc.Function{
