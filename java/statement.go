@@ -12,7 +12,7 @@ import (
 
 func convertStatementBlock(ctx *MigrationContext, blockNode *tree_sitter.Node) []gosrc.Statement {
 	var body []gosrc.Statement
-	IterateChilden(blockNode, func(child *tree_sitter.Node) {
+	IterateChildren(blockNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		// ignored
 		case "{":
@@ -32,13 +32,13 @@ func convertSwitchStatement(ctx *MigrationContext, switchNode *tree_sitter.Node)
 	bodyNode := switchNode.ChildByFieldName("body")
 	var cases []gosrc.SwitchCase
 	var defaultBody []gosrc.Statement
-	IterateChilden(bodyNode, func(switchBlockStatementGroup *tree_sitter.Node) {
+	IterateChildren(bodyNode, func(switchBlockStatementGroup *tree_sitter.Node) {
 		switch switchBlockStatementGroup.Kind() {
 		case "switch_block_statement_group":
 			var caseBody []gosrc.Statement
 			var caseCondition gosrc.Expression
 			var isDefault bool
-			IterateChilden(switchBlockStatementGroup, func(child *tree_sitter.Node) {
+			IterateChildren(switchBlockStatementGroup, func(child *tree_sitter.Node) {
 				switch child.Kind() {
 				case "switch_label":
 					if child.Utf8Text(ctx.JavaSource) == "default" {
@@ -204,7 +204,7 @@ func convertReturnStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) [
 	var initialStmts []gosrc.Statement
 	var value gosrc.Expression
 	ctx.InReturn = true
-	IterateChilden(stmtNode, func(child *tree_sitter.Node) {
+	IterateChildren(stmtNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case ";":
 		case "return":
@@ -224,7 +224,7 @@ func convertReturnStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) [
 
 func convertExpressionStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) []gosrc.Statement {
 	var body []gosrc.Statement
-	IterateChilden(stmtNode, func(child *tree_sitter.Node) {
+	IterateChildren(stmtNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "assignment_expression":
 			_, stmts := convertAssignmentExpression(ctx, child)
@@ -321,20 +321,20 @@ func convertTryStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) gosr
 	}
 
 	// Iterate through children to find catch clauses and finally
-	IterateChilden(stmtNode, func(child *tree_sitter.Node) {
+	IterateChildren(stmtNode, func(child *tree_sitter.Node) {
 		if child.Kind() == "catch_clause" {
 			var exceptionType string
 			var exceptionVar string
 			var catchBody []gosrc.Statement
 
 			// Find catch_formal_parameter
-			IterateChilden(child, func(catchChild *tree_sitter.Node) {
+			IterateChildren(child, func(catchChild *tree_sitter.Node) {
 				if catchChild.Kind() == "catch_formal_parameter" {
 					// Find catch_type
-					IterateChilden(catchChild, func(paramChild *tree_sitter.Node) {
+					IterateChildren(catchChild, func(paramChild *tree_sitter.Node) {
 						if paramChild.Kind() == "catch_type" {
 							// Get the type identifier from catch_type
-							IterateChilden(paramChild, func(typeChild *tree_sitter.Node) {
+							IterateChildren(paramChild, func(typeChild *tree_sitter.Node) {
 								if typeChild.Kind() == "type_identifier" || typeChild.Kind() == "scoped_type_identifier" {
 									exceptionType = typeChild.Utf8Text(ctx.JavaSource)
 								}
@@ -368,7 +368,7 @@ func convertTryStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node) gosr
 				finallyBody = convertStatementBlock(ctx, finallyBodyNode)
 			} else {
 				// Look for block as direct child
-				IterateChilden(child, func(fc *tree_sitter.Node) {
+				IterateChildren(child, func(fc *tree_sitter.Node) {
 					if fc.Kind() == "block" {
 						finallyBody = convertStatementBlock(ctx, fc)
 					}
@@ -414,7 +414,7 @@ func convertIfStatement(ctx *MigrationContext, stmtNode *tree_sitter.Node, inner
 func convertExplicitConstructorInvocation(ctx *MigrationContext, invocationNode *tree_sitter.Node) []gosrc.Statement {
 	parentCall := "this"
 	var argExp []gosrc.Expression
-	IterateChilden(invocationNode, func(args *tree_sitter.Node) {
+	IterateChildren(invocationNode, func(args *tree_sitter.Node) {
 		switch args.Kind() {
 		case "this":
 			parentCall = "this"

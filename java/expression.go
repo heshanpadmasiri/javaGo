@@ -14,7 +14,7 @@ import (
 
 func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []gosrc.Expression {
 	var args []gosrc.Expression
-	IterateChilden(argList, func(child *tree_sitter.Node) {
+	IterateChildren(argList, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		// ignored
 		case "(":
@@ -35,7 +35,7 @@ func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []gos
 
 func convertArrayInitializer(ctx *MigrationContext, initNode *tree_sitter.Node) []gosrc.Expression {
 	var elements []gosrc.Expression
-	IterateChilden(initNode, func(child *tree_sitter.Node) {
+	IterateChildren(initNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "{", "}", ",":
 			// Structural tokens - ignore
@@ -60,7 +60,7 @@ func convertAssignmentExpression(ctx *MigrationContext, expression *tree_sitter.
 
 	// Check if this is a compound assignment by looking for operators like |=, &=, etc.
 	var operator string
-	IterateChilden(expression, func(child *tree_sitter.Node) {
+	IterateChildren(expression, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "|=", "&=", "^=", "<<=", ">>=", "+=", "-=", "*=", "/=", "%=":
 			operator = child.Utf8Text(ctx.JavaSource)
@@ -150,7 +150,7 @@ func extractTypeArguments(ctx *MigrationContext, expression *tree_sitter.Node) [
 	var types []string
 	typeArgsNode := expression.ChildByFieldName("type").ChildByFieldName("type_arguments")
 	if typeArgsNode != nil {
-		IterateChilden(typeArgsNode, func(child *tree_sitter.Node) {
+		IterateChildren(typeArgsNode, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case "type_identifier":
 				childTy, ok := TryParseType(ctx, child)
@@ -340,7 +340,7 @@ func convertUnaryExpression(ctx *MigrationContext, expression *tree_sitter.Node)
 	operandNode := expression.ChildByFieldName("operand")
 	operand, initStmts := convertExpression(ctx, operandNode)
 	var operator string
-	IterateChilden(expression, func(child *tree_sitter.Node) {
+	IterateChildren(expression, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "!", "+", "-", "~":
 			operator = child.Utf8Text(ctx.JavaSource)
@@ -415,7 +415,7 @@ func convertBinaryExpression(ctx *MigrationContext, expression *tree_sitter.Node
 	rigth, rightInit := convertExpression(ctx, rightNode)
 	stms := append(leftInit, rightInit...)
 	var operator string
-	IterateChilden(expression, func(child *tree_sitter.Node) {
+	IterateChildren(expression, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "||", "&&", "==", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%":
 			operator = child.Utf8Text(ctx.JavaSource)

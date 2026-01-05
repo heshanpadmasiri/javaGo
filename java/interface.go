@@ -13,7 +13,7 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 	var defaultMethods []gosrc.Function
 	var staticMethods []gosrc.Function
 
-	IterateChilden(interfaceNode, func(child *tree_sitter.Node) {
+	IterateChildren(interfaceNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			// Interfaces are always public, so we don't need to parse modifiers
@@ -21,10 +21,10 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 			interfaceName = child.Utf8Text(ctx.JavaSource)
 		case "extends_interfaces":
 			// Parse extends clause - iterate through children to find type_list
-			IterateChilden(child, func(extendsChild *tree_sitter.Node) {
+			IterateChildren(child, func(extendsChild *tree_sitter.Node) {
 				if extendsChild.Kind() == "type_list" {
 					// Iterate through the type_list to get individual types
-					IterateChilden(extendsChild, func(typeChild *tree_sitter.Node) {
+					IterateChildren(extendsChild, func(typeChild *tree_sitter.Node) {
 						ty, ok := TryParseType(ctx, typeChild)
 						if ok {
 							superInterfaces = append(superInterfaces, ty)
@@ -34,7 +34,7 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 			})
 		case "interface_body":
 			// Parse methods in interface body
-			IterateChilden(child, func(bodyChild *tree_sitter.Node) {
+			IterateChildren(child, func(bodyChild *tree_sitter.Node) {
 				switch bodyChild.Kind() {
 				case "class_declaration":
 					migrateClassDeclaration(ctx, bodyChild)

@@ -23,9 +23,10 @@ type MigrationContext struct {
 	InDefaultMethod     bool
 	DefaultMethodSelf   string
 	EnumConstants       map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
-	Constructors        map[gosrc.Type][]FunctionData
-	Methods             map[string][]FunctionData  // Maps method name to method signatures
-	MethodMetadataCache map[uintptr]methodMetadata // Cache of parsed method signatures by node ID
+	Constructors             map[gosrc.Type][]FunctionData
+	Methods                  map[string][]FunctionData       // Maps method name to method signatures
+	MethodMetadataCache      map[uintptr]methodMetadata      // Cache of parsed method signatures by node ID
+	ConstructorMetadataCache map[uintptr]constructorMetadata // Cache of parsed constructor signatures by node ID
 }
 
 type FunctionData struct {
@@ -40,13 +41,14 @@ func (this FunctionData) sameArgs(other FunctionData) bool {
 // NewMigrationContext creates and initializes a new MigrationContext
 func NewMigrationContext(javaSource []byte, sourceFilePath string) *MigrationContext {
 	return &MigrationContext{
-		JavaSource:          javaSource,
-		SourceFilePath:      sourceFilePath,
-		AbstractClasses:     make(map[string]bool),
-		EnumConstants:       make(map[string]string),
-		Constructors:        make(map[gosrc.Type][]FunctionData),
-		Methods:             make(map[string][]FunctionData),
-		MethodMetadataCache: make(map[uintptr]methodMetadata),
+		JavaSource:               javaSource,
+		SourceFilePath:           sourceFilePath,
+		AbstractClasses:          make(map[string]bool),
+		EnumConstants:            make(map[string]string),
+		Constructors:             make(map[gosrc.Type][]FunctionData),
+		Methods:                  make(map[string][]FunctionData),
+		MethodMetadataCache:      make(map[uintptr]methodMetadata),
+		ConstructorMetadataCache: make(map[uintptr]constructorMetadata),
 	}
 }
 
@@ -99,6 +101,7 @@ func MigrateTree(ctx *MigrationContext, tree *tree_sitter.Tree) {
 // analyzeNode performs pre-migration analysis to collect method signatures
 func analyzeNode(ctx *MigrationContext, tree *tree_sitter.Tree) {
 	analyzeMethodDeclartions(ctx, tree)
+	analyzeConstructorDeclarations(ctx, tree)
 }
 
 func analyzeMethodDeclartions(ctx *MigrationContext, tree *tree_sitter.Tree) {
@@ -132,6 +135,37 @@ func analyzeMethodDeclartions(ctx *MigrationContext, tree *tree_sitter.Tree) {
 	}
 }
 
+func analyzeConstructorDeclarations(ctx *MigrationContext, tree *tree_sitter.Tree) {
+	// Create query to find all constructor declarations
+	language := tree_sitter.NewLanguage(tree_sitter_java.Language())
+	query, err := tree_sitter.NewQuery(language, "(constructor_declaration) @constructor")
+	if err != nil {
+		// This is a programming error - the query syntax is invalid
+		panic(fmt.Sprintf("Invalid tree-sitter query: %v", err))
+	}
+	defer query.Close()
+
+	// Execute query
+	cursor := tree_sitter.NewQueryCursor()
+	defer cursor.Close()
+
+	root := tree.RootNode()
+	matches := cursor.Matches(query, root, ctx.JavaSource)
+
+	// Process each match
+	for match := matches.Next(); match != nil; match = matches.Next() {
+		for _, capture := range match.Captures {
+			constructorNode := &capture.Node
+
+			// Parse constructor signature
+			constructorMetadata := parseConstructorSignature(ctx, constructorNode)
+			funcData := constructorMetadata.toFunctionData()
+
+			addConstructorToCtx(ctx, funcData, constructorMetadata, constructorNode.Id())
+		}
+	}
+}
+
 func addMethodToCtx(ctx *MigrationContext, fn FunctionData, metadata methodMetadata, nodeID uintptr) {
 	name, shouldChangeName := addMethodToCtxInner(ctx, fn)
 	if shouldChangeName {
@@ -160,6 +194,28 @@ func addMethodToCtxInner(ctx *MigrationContext, fn FunctionData) (string, bool) 
 	return overloadedName, true
 }
 
+func addConstructorToCtx(ctx *MigrationContext, fn FunctionData, metadata constructorMetadata, nodeID uintptr) {
+	ty := gosrc.Type(metadata.structName)
+	currentConstructors := ctx.Constructors[ty]
+	if len(currentConstructors) == 0 {
+		ctx.Constructors[ty] = append(currentConstructors, fn)
+		ctx.ConstructorMetadataCache[nodeID] = metadata
+		return
+	}
+	// Check if we already have a matching constructor
+	for _, each := range currentConstructors {
+		if each.sameArgs(fn) {
+			// No need to add we already have a matching constructor
+			ctx.ConstructorMetadataCache[nodeID] = metadata
+			return
+		}
+	}
+	// Constructor names already include parameter types (e.g., "newTypeFromString"),
+	// so they should be unique. Just add it with the original name.
+	ctx.Constructors[ty] = append(currentConstructors, fn)
+	ctx.ConstructorMetadataCache[nodeID] = metadata
+}
+
 // getMigrationComment creates a comment indicating the source location in the Java file
 func getMigrationComment(ctx *MigrationContext, node *tree_sitter.Node) string {
 	pos := node.StartPosition()
@@ -173,7 +229,7 @@ func getMigrationComment(ctx *MigrationContext, node *tree_sitter.Node) string {
 func migrateNode(ctx *MigrationContext, node *tree_sitter.Node) {
 	switch node.Kind() {
 	case "program":
-		IterateChilden(node, func(child *tree_sitter.Node) {
+		IterateChildren(node, func(child *tree_sitter.Node) {
 			migrateNode(ctx, child)
 		})
 	case "class_declaration":

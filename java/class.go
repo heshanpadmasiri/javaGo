@@ -24,7 +24,7 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 	var includes []gosrc.Type
 	var implementedInterfaces []gosrc.Type
 	isAbstract := false
-	IterateChilden(classNode, func(child *tree_sitter.Node) {
+	IterateChildren(classNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "modifiers":
 			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
@@ -40,10 +40,10 @@ func migrateClassDeclaration(ctx *MigrationContext, classNode *tree_sitter.Node)
 			}
 		case "super_interfaces":
 			// Parse implements clause - iterate through children to find type_list
-			IterateChilden(child, func(superinterfacesChild *tree_sitter.Node) {
+			IterateChildren(child, func(superinterfacesChild *tree_sitter.Node) {
 				if superinterfacesChild.Kind() == "type_list" {
 					// Iterate through the type_list to get individual types
-					IterateChilden(superinterfacesChild, func(typeChild *tree_sitter.Node) {
+					IterateChildren(superinterfacesChild, func(typeChild *tree_sitter.Node) {
 						ty, ok := TryParseType(ctx, typeChild)
 						if ok {
 							implementedInterfaces = append(implementedInterfaces, ty)
@@ -129,7 +129,7 @@ func convertAbstractClass(ctx *MigrationContext, className string, modifiers mod
 	var comments []string
 	fieldInitValues := map[string]gosrc.Expression{}
 
-	IterateChilden(classBody, func(child *tree_sitter.Node) {
+	IterateChildren(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "class_declaration":
 			migrateClassDeclaration(ctx, child)
@@ -529,7 +529,7 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 	var result classConversionResult
 	fieldInitValues := map[string]gosrc.Expression{}
 	hasConstructor := false
-	IterateChilden(classBody, func(child *tree_sitter.Node) {
+	IterateChildren(classBody, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "class_declaration":
 			migrateClassDeclaration(ctx, child)
@@ -616,6 +616,25 @@ func (methodMetadata methodMetadata) toFunctionData() FunctionData {
 	}
 }
 
+type constructorMetadata struct {
+	structName string
+	params     []gosrc.Param
+	isPublic   bool
+	name       string // The Go constructor function name
+}
+
+func (constructorMetadata constructorMetadata) toFunctionData() FunctionData {
+	var argTypes []gosrc.Type
+	for _, param := range constructorMetadata.params {
+		argTypes = append(argTypes, param.Ty)
+	}
+
+	return FunctionData{
+		Name:          constructorMetadata.name,
+		ArgumentTypes: argTypes,
+	}
+}
+
 // getMethodMetadata retrieves cached method metadata.
 // Panics if metadata is not in cache (programming error).
 func getMethodMetadata(ctx *MigrationContext, methodNode *tree_sitter.Node) methodMetadata {
@@ -633,7 +652,7 @@ func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) m
 	var name string
 	var returnType *gosrc.Type
 	var hasThrows bool
-	IterateChilden(methodNode, func(child *tree_sitter.Node) {
+	IterateChildren(methodNode, func(child *tree_sitter.Node) {
 		ty, isType := TryParseType(ctx, child)
 		if isType {
 			returnType = &ty
@@ -686,6 +705,52 @@ func parseMethodSignature(ctx *MigrationContext, methodNode *tree_sitter.Node) m
 	}
 }
 
+func parseConstructorSignature(ctx *MigrationContext, constructorNode *tree_sitter.Node) constructorMetadata {
+	var modifiers modifiers
+	var params []gosrc.Param
+	var structName string
+
+	IterateChildren(constructorNode, func(child *tree_sitter.Node) {
+		switch child.Kind() {
+		case "modifiers":
+			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
+		case "formal_parameters":
+			params = convertFormalParameters(ctx, child)
+		case "identifier":
+			structName = child.Utf8Text(ctx.JavaSource)
+		// ignored
+		case "constructor_body":
+		case "line_comment":
+		case "block_comment":
+		default:
+			UnhandledChild(ctx, child, "constructor_declaration")
+		}
+	})
+
+	// Convert struct name using identifier rules
+	structName = gosrc.ToIdentifier(structName, modifiers.isPublic())
+
+	// Generate constructor name based on struct name and parameter types
+	// This name includes parameter types (e.g., "newTypeFromString") so it should be unique
+	nameBuilder := strings.Builder{}
+	nameBuilder.WriteString(gosrc.ToIdentifier("new", modifiers.isPublic()))
+	nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(structName))
+	if len(params) > 0 {
+		nameBuilder.WriteString("From")
+		for _, param := range params {
+			nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(param.Ty.ToSource()))
+		}
+	}
+	constructorName := nameBuilder.String()
+
+	return constructorMetadata{
+		structName: structName,
+		params:     params,
+		isPublic:   modifiers.isPublic(),
+		name:       constructorName,
+	}
+}
+
 func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tree_sitter.Node) (gosrc.Function, bool, bool) {
 	methodMetadata := getMethodMetadata(ctx, methodNode)
 	params := methodMetadata.params
@@ -722,33 +787,43 @@ func convertMethodDeclarationWithAbstract(ctx *MigrationContext, methodNode *tre
 func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, structName string, constructorNode *tree_sitter.Node, isPublicClass bool) gosrc.Function {
 	var modifiers modifiers
 	var params []gosrc.Param
+	var name string
 	var body []gosrc.Statement
-	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
-	IterateChilden(constructorNode, func(child *tree_sitter.Node) {
-		switch child.Kind() {
-		case "modifiers":
-			modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
-		case "formal_parameters":
-			params = convertFormalParameters(ctx, child)
-		case "constructor_body":
-			body = append(body, convertConstructorBody(ctx, fieldInitValues, child)...)
-		// ignored
-		case "identifier":
-		case "line_comment":
-		case "block_comment":
-		default:
-			UnhandledChild(ctx, child, "constructor_declaration")
+
+	// Use cached metadata if available (when constructorNode is not nil)
+	if constructorNode != nil {
+		metadata, hasCached := ctx.ConstructorMetadataCache[constructorNode.Id()]
+		if !hasCached {
+			panic(fmt.Sprintf("Constructor metadata not found in cache for node ID %d. This is a programming error - analyzeNode should have been called first.", constructorNode.Id()))
 		}
-	})
-	if constructorNode == nil {
+		// Use cached metadata
+		params = metadata.params
+		name = metadata.name
+		if metadata.isPublic {
+			modifiers = PUBLIC
+		}
+	} else {
 		// Default constructor - use class visibility
 		if isPublicClass {
 			modifiers = PUBLIC
 		}
+		name = constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
+	}
+
+	body = append(body, &gosrc.GoStatement{Source: fmt.Sprintf("%s := %s{};", gosrc.SelfRef, structName)})
+
+	// Process constructor body if present
+	if constructorNode != nil {
+		bodyNode := constructorNode.ChildByFieldName("body")
+		if bodyNode != nil {
+			body = append(body, convertConstructorBody(ctx, fieldInitValues, bodyNode)...)
+		}
+	} else {
+		// Default constructor
 		body = append(body, fieldInitStmts(fieldInitValues)...)
 	}
+
 	body = append(body, &gosrc.ReturnStatement{Value: &gosrc.VarRef{Ref: gosrc.SelfRef}})
-	name := constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
 	retTy := gosrc.Type(structName)
 	return gosrc.Function{
 		Name:       name,
@@ -761,7 +836,7 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 
 func convertConstructorBody(ctx *MigrationContext, fieldInitValues *map[string]gosrc.Expression, bodyNode *tree_sitter.Node) []gosrc.Statement {
 	body := fieldInitStmts(fieldInitValues)
-	IterateChilden(bodyNode, func(child *tree_sitter.Node) {
+	IterateChildren(bodyNode, func(child *tree_sitter.Node) {
 		switch child.Kind() {
 		case "explicit_constructor_invocation":
 			body = append(body, convertExplicitConstructorInvocation(ctx, child)...)

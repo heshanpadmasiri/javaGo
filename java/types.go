@@ -76,7 +76,7 @@ func ParseModifiers(source string) modifiers {
 // HasModifier checks if a node has a specific modifier
 func HasModifier(ctx *MigrationContext, methodNode *tree_sitter.Node, modifier string) bool {
 	hasModifier := false
-	IterateChilden(methodNode, func(child *tree_sitter.Node) {
+	IterateChildren(methodNode, func(child *tree_sitter.Node) {
 		if child.Kind() == "modifiers" {
 			modText := child.Utf8Text(ctx.JavaSource)
 			if strings.Contains(modText, modifier) {
@@ -95,7 +95,7 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 		// since Go doesn't have nested types
 		var typeName string
 		// The last type_identifier child is the actual type we want
-		IterateChilden(node, func(child *tree_sitter.Node) {
+		IterateChildren(node, func(child *tree_sitter.Node) {
 			if child.Kind() == "type_identifier" {
 				typeName = child.Utf8Text(ctx.JavaSource)
 			}
@@ -186,12 +186,12 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 	case "generic_type":
 		var typeName string
 		var typeParams []string
-		IterateChilden(node, func(child *tree_sitter.Node) {
+		IterateChildren(node, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case "type_identifier":
 				typeName = child.Utf8Text(ctx.JavaSource)
 			case "type_arguments":
-				IterateChilden(child, func(typeArg *tree_sitter.Node) {
+				IterateChildren(child, func(typeArg *tree_sitter.Node) {
 					if typeArg.Kind() == "type_identifier" {
 						typeParams = append(typeParams, typeArg.Utf8Text(ctx.JavaSource))
 					}
