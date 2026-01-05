@@ -88,19 +88,11 @@ func constructorName(ctx *MigrationContext, isPublic bool, ty gosrc.Type, params
 			return name
 		}
 	}
+	// Return default constructor name: new${Ty}
 	nameBuilder := strings.Builder{}
 	nameBuilder.WriteString(gosrc.ToIdentifier("new", isPublic))
 	nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(ty.ToSource()))
-
-	if len(params) > 0 {
-		nameBuilder.WriteString("From")
-		for _, param := range params {
-			nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(param.Ty.ToSource()))
-		}
-	}
-	name := nameBuilder.String()
-	ctx.Constructors[ty] = append(ctx.Constructors[ty], FunctionData{Name: name, ArgumentTypes: paramTys})
-	return name
+	return nameBuilder.String()
 }
 
 func findOverloadedMethod(methods []FunctionData, parameterTys []gosrc.Type) (string, bool) {

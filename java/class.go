@@ -730,14 +730,24 @@ func parseConstructorSignature(ctx *MigrationContext, constructorNode *tree_sitt
 	// Convert struct name using identifier rules
 	structName = gosrc.ToIdentifier(structName, modifiers.isPublic())
 
-	// Generate constructor name (will be stored in metadata)
-	name := constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
+	// Generate constructor name based on struct name and parameter types
+	// This name includes parameter types (e.g., "newTypeFromString") so it should be unique
+	nameBuilder := strings.Builder{}
+	nameBuilder.WriteString(gosrc.ToIdentifier("new", modifiers.isPublic()))
+	nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(structName))
+	if len(params) > 0 {
+		nameBuilder.WriteString("From")
+		for _, param := range params {
+			nameBuilder.WriteString(gosrc.CapitalizeFirstLetter(param.Ty.ToSource()))
+		}
+	}
+	constructorName := nameBuilder.String()
 
 	return constructorMetadata{
 		structName: structName,
 		params:     params,
 		isPublic:   modifiers.isPublic(),
-		name:       name,
+		name:       constructorName,
 	}
 }
 
@@ -789,9 +799,8 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 		// Use cached metadata
 		params = metadata.params
 		name = metadata.name
-		modifiers = PUBLIC
-		if !metadata.isPublic {
-			modifiers = 0
+		if metadata.isPublic {
+			modifiers = PUBLIC
 		}
 	} else {
 		// Default constructor - use class visibility

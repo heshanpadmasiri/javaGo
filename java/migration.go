@@ -195,8 +195,24 @@ func addMethodToCtxInner(ctx *MigrationContext, fn FunctionData) (string, bool) 
 }
 
 func addConstructorToCtx(ctx *MigrationContext, fn FunctionData, metadata constructorMetadata, nodeID uintptr) {
-	// Constructors are already stored in ctx.Constructors by constructorName() call in parseConstructorSignature
-	// Just need to cache the metadata
+	ty := gosrc.Type(metadata.structName)
+	currentConstructors := ctx.Constructors[ty]
+	if len(currentConstructors) == 0 {
+		ctx.Constructors[ty] = append(currentConstructors, fn)
+		ctx.ConstructorMetadataCache[nodeID] = metadata
+		return
+	}
+	// Check if we already have a matching constructor
+	for _, each := range currentConstructors {
+		if each.sameArgs(fn) {
+			// No need to add we already have a matching constructor
+			ctx.ConstructorMetadataCache[nodeID] = metadata
+			return
+		}
+	}
+	// Constructor names already include parameter types (e.g., "newTypeFromString"),
+	// so they should be unique. Just add it with the original name.
+	ctx.Constructors[ty] = append(currentConstructors, fn)
 	ctx.ConstructorMetadataCache[nodeID] = metadata
 }
 
