@@ -783,32 +783,15 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 	// Use cached metadata if available (when constructorNode is not nil)
 	if constructorNode != nil {
 		metadata, hasCached := ctx.ConstructorMetadataCache[constructorNode.Id()]
-		if hasCached {
-			// Use cached metadata
-			params = metadata.params
-			name = metadata.name
-			modifiers = PUBLIC
-			if !metadata.isPublic {
-				modifiers = 0
-			}
-		} else {
-			// Fallback: parse inline (this shouldn't happen if analyzeNode was called)
-			IterateChilden(constructorNode, func(child *tree_sitter.Node) {
-				switch child.Kind() {
-				case "modifiers":
-					modifiers = ParseModifiers(child.Utf8Text(ctx.JavaSource))
-				case "formal_parameters":
-					params = convertFormalParameters(ctx, child)
-				// ignored
-				case "identifier":
-				case "constructor_body":
-				case "line_comment":
-				case "block_comment":
-				default:
-					UnhandledChild(ctx, child, "constructor_declaration")
-				}
-			})
-			name = constructorName(ctx, modifiers.isPublic(), gosrc.Type(structName), params...)
+		if !hasCached {
+			panic(fmt.Sprintf("Constructor metadata not found in cache for node ID %d. This is a programming error - analyzeNode should have been called first.", constructorNode.Id()))
+		}
+		// Use cached metadata
+		params = metadata.params
+		name = metadata.name
+		modifiers = PUBLIC
+		if !metadata.isPublic {
+			modifiers = 0
 		}
 	} else {
 		// Default constructor - use class visibility
@@ -822,20 +805,10 @@ func convertConstructor(ctx *MigrationContext, fieldInitValues *map[string]gosrc
 	
 	// Process constructor body if present
 	if constructorNode != nil {
-		IterateChilden(constructorNode, func(child *tree_sitter.Node) {
-			switch child.Kind() {
-			case "constructor_body":
-				body = append(body, convertConstructorBody(ctx, fieldInitValues, child)...)
-			// ignored
-			case "modifiers":
-			case "formal_parameters":
-			case "identifier":
-			case "line_comment":
-			case "block_comment":
-			default:
-				UnhandledChild(ctx, child, "constructor_declaration")
-			}
-		})
+		bodyNode := constructorNode.ChildByFieldName("body")
+		if bodyNode != nil {
+			body = append(body, convertConstructorBody(ctx, fieldInitValues, bodyNode)...)
+		}
 	} else {
 		// Default constructor
 		body = append(body, fieldInitStmts(fieldInitValues)...)
