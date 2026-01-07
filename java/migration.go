@@ -15,18 +15,29 @@ import (
 
 // MigrationContext holds state during Java to Go migration
 type MigrationContext struct {
-	Source              gosrc.GoSource
-	JavaSource          []byte
-	SourceFilePath      string // Path to the source Java file
-	InReturn            bool
-	AbstractClasses     map[string]bool
-	InDefaultMethod     bool
-	DefaultMethodSelf   string
-	EnumConstants       map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
+	Source                   gosrc.GoSource
+	JavaSource               []byte
+	SourceFilePath           string // Path to the source Java file
+	InReturn                 bool
+	AbstractClasses          map[string]bool
+	InDefaultMethod          bool
+	DefaultMethodSelf        string
+	EnumConstants            map[string]string // Maps enum constant name to prefixed name (e.g., "ACTIVE" -> "Status_ACTIVE")
 	Constructors             map[gosrc.Type][]FunctionData
 	Methods                  map[string][]FunctionData       // Maps method name to method signatures
 	MethodMetadataCache      map[uintptr]methodMetadata      // Cache of parsed method signatures by node ID
 	ConstructorMetadataCache map[uintptr]constructorMetadata // Cache of parsed constructor signatures by node ID
+	StrictMode               bool                            // If true, treat migration errors as fatal
+	Errors                   []MigrationError                // Collected migration errors
+}
+
+// MigrationError represents an error that occurred during migration
+type MigrationError struct {
+	Location   string // e.g., "class Foo.method bar"
+	JavaSource string // The Java code that failed
+	SExpr      string // The S-expression
+	Message    string // Error message
+	NodeKind   string // Type of node (for debugging)
 }
 
 type FunctionData struct {
@@ -39,7 +50,7 @@ func (this FunctionData) sameArgs(other FunctionData) bool {
 }
 
 // NewMigrationContext creates and initializes a new MigrationContext
-func NewMigrationContext(javaSource []byte, sourceFilePath string) *MigrationContext {
+func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bool) *MigrationContext {
 	return &MigrationContext{
 		JavaSource:               javaSource,
 		SourceFilePath:           sourceFilePath,
@@ -49,6 +60,8 @@ func NewMigrationContext(javaSource []byte, sourceFilePath string) *MigrationCon
 		Methods:                  make(map[string][]FunctionData),
 		MethodMetadataCache:      make(map[uintptr]methodMetadata),
 		ConstructorMetadataCache: make(map[uintptr]constructorMetadata),
+		StrictMode:               strictMode,
+		Errors:                   []MigrationError{},
 	}
 }
 

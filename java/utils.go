@@ -30,15 +30,36 @@ func TryGetChildByFieldName(node *tree_sitter.Node, fieldName string) *tree_sitt
 	return nil
 }
 
-// UnhandledChild reports an unhandled child node and exits
+// MigrationPanic represents a panic during migration with structured error information
+type MigrationPanic struct {
+	Message    string
+	JavaSource string
+	SExpr      string
+	NodeKind   string
+	ParentName string
+}
+
+// UnhandledChild reports an unhandled child node and exits (in strict mode) or panics (in non-strict mode)
 func UnhandledChild(ctx *MigrationContext, node *tree_sitter.Node, parentName string) {
 	msg := fmt.Sprintf("unhandled %s child node kind: %s\nS-expression: %s\nSource: %s",
 		parentName,
 		node.Kind(),
 		node.ToSexp(),
 		node.Utf8Text(ctx.JavaSource))
-	fmt.Fprintf(os.Stderr, "Fatal: %s\n", msg)
-	os.Exit(1)
+
+	if ctx.StrictMode {
+		fmt.Fprintf(os.Stderr, "Fatal: %s\n", msg)
+		os.Exit(1)
+	}
+
+	// In non-strict mode, panic with structured error info
+	panic(MigrationPanic{
+		Message:    msg,
+		JavaSource: node.Utf8Text(ctx.JavaSource),
+		SExpr:      node.ToSexp(),
+		NodeKind:   node.Kind(),
+		ParentName: parentName,
+	})
 }
 
 // Assert checks a condition and exits with an error message if false
@@ -169,4 +190,78 @@ func getConvertedMethodName(ctx *MigrationContext, methodName string, argCount i
 
 	// Multiple methods - try to guess by argument count
 	return tryGuessOverloadedMethod(methods, argCount)
+}
+
+// tryMigrateMember wraps a migration function with panic recovery
+// Returns a FailedMigration if the migration panics, nil otherwise
+func tryMigrateMember(ctx *MigrationContext, location string, node *tree_sitter.Node, fn func()) *gosrc.FailedMigration {
+	defer func() {
+		if r := recover(); r != nil {
+			// Let strict mode panics propagate
+			if ctx.StrictMode {
+				panic(r)
+			}
+			// Otherwise this is handled by handleMigrationPanic below
+		}
+	}()
+
+	// Set up inner recovery to capture the panic and convert to FailedMigration
+	var failed *gosrc.FailedMigration
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				failed = handleMigrationPanic(ctx, location, node, r)
+			}
+		}()
+		fn()
+	}()
+
+	return failed
+}
+
+// handleMigrationPanic handles a panic during migration by recording the error
+// and returning a FailedMigration placeholder
+func handleMigrationPanic(ctx *MigrationContext, location string, node *tree_sitter.Node, r any) *gosrc.FailedMigration {
+	var err MigrationError
+
+	switch v := r.(type) {
+	case MigrationPanic:
+		err = MigrationError{
+			Location:   location,
+			JavaSource: v.JavaSource,
+			SExpr:      v.SExpr,
+			Message:    v.Message,
+			NodeKind:   v.NodeKind,
+		}
+	default:
+		// Handle unexpected panics
+		javaSource := ""
+		sexpr := ""
+		nodeKind := ""
+		if node != nil {
+			javaSource = node.Utf8Text(ctx.JavaSource)
+			sexpr = node.ToSexp()
+			nodeKind = node.Kind()
+		}
+		err = MigrationError{
+			Location:   location,
+			JavaSource: javaSource,
+			SExpr:      sexpr,
+			Message:    fmt.Sprintf("unexpected panic: %v", r),
+			NodeKind:   nodeKind,
+		}
+	}
+
+	ctx.Errors = append(ctx.Errors, err)
+
+	// Print to stderr immediately
+	fmt.Fprintf(os.Stderr, "Error migrating %s: %s\n", location, err.Message)
+
+	// Return FailedMigration placeholder
+	return &gosrc.FailedMigration{
+		ErrorMessage: err.Message,
+		JavaSource:   err.JavaSource,
+		SExpr:        err.SExpr,
+		Location:     location,
+	}
 }

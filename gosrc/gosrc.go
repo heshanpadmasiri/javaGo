@@ -36,14 +36,15 @@ type (
 type (
 	// GoSource represents a complete Go source file
 	GoSource struct {
-		Imports     []Import
-		Interfaces  []Interface
-		Structs     []Struct
-		Constants   []ModuleConst
-		ConstBlocks []ConstBlock
-		Vars        []ModuleVar
-		Functions   []Function
-		Methods     []Method
+		Imports          []Import
+		Interfaces       []Interface
+		Structs          []Struct
+		Constants        []ModuleConst
+		ConstBlocks      []ConstBlock
+		Vars             []ModuleVar
+		Functions        []Function
+		Methods          []Method
+		FailedMigrations []FailedMigration
 	}
 
 	// Import represents a package import
@@ -126,6 +127,14 @@ type (
 		Name  string
 		Ty    Type
 		Value Expression
+	}
+
+	// FailedMigration represents a migration that failed
+	FailedMigration struct {
+		ErrorMessage string
+		JavaSource   string
+		SExpr        string
+		Location     string
 	}
 )
 
@@ -365,6 +374,25 @@ func (s *GoSource) ToSource(config Config) string {
 	}
 	for _, method := range s.Methods {
 		sb.WriteString(method.ToSource())
+		sb.WriteString("\n")
+	}
+	// Render failed migrations as comments
+	for _, failed := range s.FailedMigrations {
+		sb.WriteString("// FIXME: Failed to migrate\n")
+		sb.WriteString(fmt.Sprintf("// Location: %s\n", failed.Location))
+		sb.WriteString(fmt.Sprintf("// Error: %s\n", failed.ErrorMessage))
+		if failed.JavaSource != "" {
+			sb.WriteString("// Java source:\n")
+			for _, line := range strings.Split(failed.JavaSource, "\n") {
+				sb.WriteString("// " + line + "\n")
+			}
+		}
+		if failed.SExpr != "" {
+			sb.WriteString("// S-expression:\n")
+			for _, line := range strings.Split(failed.SExpr, "\n") {
+				sb.WriteString("// " + line + "\n")
+			}
+		}
 		sb.WriteString("\n")
 	}
 	return sb.String()

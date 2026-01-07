@@ -130,48 +130,57 @@ func convertAbstractClass(ctx *MigrationContext, className string, modifiers mod
 	fieldInitValues := map[string]gosrc.Expression{}
 
 	IterateChildren(classBody, func(child *tree_sitter.Node) {
+		// Skip ignored tokens
 		switch child.Kind() {
-		case "class_declaration":
-			migrateClassDeclaration(ctx, child)
-		case "record_declaration":
-			migrateRecordDeclaration(ctx, child)
-		case "enum_declaration":
-			migrateEnumDeclaration(ctx, child)
-		case "field_declaration":
-			field, initExpr, mods := convertFieldDeclaration(ctx, child)
-			if mods&STATIC != 0 {
-				ctx.Source.Vars = append(ctx.Source.Vars, gosrc.ModuleVar{
-					Name:  field.Name,
-					Ty:    field.Ty,
-					Value: initExpr,
-				})
-			} else {
-				if initExpr != nil {
-					Assert("mutiple initializations for field"+field.Name, fieldInitValues[field.Name] == nil)
-					fieldInitValues[field.Name] = initExpr
-				}
-				fields = append(fields, field)
-			}
-		case "method_declaration":
-			function, isStatic, isAbstract := convertMethodDeclarationWithAbstract(ctx, child)
-			if !isStatic {
-				if isAbstract {
-					abstractMethods = append(abstractMethods, function)
+		case "{", "}", "block_comment", "line_comment":
+			return
+		}
+
+		// Wrap member migration in error recovery
+		failed := tryMigrateMember(ctx, fmt.Sprintf("abstract class %s.%s", className, child.Kind()), child, func() {
+			switch child.Kind() {
+			case "class_declaration":
+				migrateClassDeclaration(ctx, child)
+			case "record_declaration":
+				migrateRecordDeclaration(ctx, child)
+			case "enum_declaration":
+				migrateEnumDeclaration(ctx, child)
+			case "field_declaration":
+				field, initExpr, mods := convertFieldDeclaration(ctx, child)
+				if mods&STATIC != 0 {
+					ctx.Source.Vars = append(ctx.Source.Vars, gosrc.ModuleVar{
+						Name:  field.Name,
+						Ty:    field.Ty,
+						Value: initExpr,
+					})
 				} else {
-					defaultMethods = append(defaultMethods, function)
+					if initExpr != nil {
+						Assert("mutiple initializations for field"+field.Name, fieldInitValues[field.Name] == nil)
+						fieldInitValues[field.Name] = initExpr
+					}
+					fields = append(fields, field)
 				}
-			} else {
-				ctx.Source.Functions = append(ctx.Source.Functions, function)
+			case "method_declaration":
+				function, isStatic, isAbstract := convertMethodDeclarationWithAbstract(ctx, child)
+				if !isStatic {
+					if isAbstract {
+						abstractMethods = append(abstractMethods, function)
+					} else {
+						defaultMethods = append(defaultMethods, function)
+					}
+				} else {
+					ctx.Source.Functions = append(ctx.Source.Functions, function)
+				}
+			case "constructor_declaration":
+				// Abstract classes can have constructors, but we'll skip them for now
+			default:
+				UnhandledChild(ctx, child, "class_body")
 			}
-		case "constructor_declaration":
-			// Abstract classes can have constructors, but we'll skip them for now
-		// ignored
-		case "{":
-		case "}":
-		case "block_comment":
-		case "line_comment":
-		default:
-			UnhandledChild(ctx, child, "class_body")
+		})
+
+		if failed != nil {
+			// Add to source as failed migration
+			ctx.Source.FailedMigrations = append(ctx.Source.FailedMigrations, *failed)
 		}
 	})
 
@@ -530,55 +539,64 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 	fieldInitValues := map[string]gosrc.Expression{}
 	hasConstructor := false
 	IterateChildren(classBody, func(child *tree_sitter.Node) {
+		// Skip ignored tokens
 		switch child.Kind() {
-		case "class_declaration":
-			migrateClassDeclaration(ctx, child)
-		case "record_declaration":
-			migrateRecordDeclaration(ctx, child)
-		case "enum_declaration":
-			migrateEnumDeclaration(ctx, child)
-		case "field_declaration":
-			field, initExpr, mods := convertFieldDeclaration(ctx, child)
-			// If field is static final, add as module-level var
-			if mods&STATIC != 0 {
-				ctx.Source.Vars = append(ctx.Source.Vars, gosrc.ModuleVar{
-					Name:  field.Name,
-					Ty:    field.Ty,
-					Value: initExpr,
-				})
-			} else {
-				// Regular field
-				if initExpr != nil {
-					Assert("mutiple initializations for field"+field.Name, fieldInitValues[field.Name] == nil)
-					fieldInitValues[field.Name] = initExpr
+		case "{", "}", "block_comment", "line_comment":
+			return
+		}
+
+		// Wrap member migration in error recovery
+		failed := tryMigrateMember(ctx, fmt.Sprintf("class %s.%s", structName, child.Kind()), child, func() {
+			switch child.Kind() {
+			case "class_declaration":
+				migrateClassDeclaration(ctx, child)
+			case "record_declaration":
+				migrateRecordDeclaration(ctx, child)
+			case "enum_declaration":
+				migrateEnumDeclaration(ctx, child)
+			case "field_declaration":
+				field, initExpr, mods := convertFieldDeclaration(ctx, child)
+				// If field is static final, add as module-level var
+				if mods&STATIC != 0 {
+					ctx.Source.Vars = append(ctx.Source.Vars, gosrc.ModuleVar{
+						Name:  field.Name,
+						Ty:    field.Ty,
+						Value: initExpr,
+					})
+				} else {
+					// Regular field
+					if initExpr != nil {
+						Assert("mutiple initializations for field"+field.Name, fieldInitValues[field.Name] == nil)
+						fieldInitValues[field.Name] = initExpr
+					}
+					result.Fields = append(result.Fields, field)
 				}
-				result.Fields = append(result.Fields, field)
+			case "constructor_declaration":
+				result.Functions = append(result.Functions, convertConstructor(ctx, &fieldInitValues, structName, child, isPublicClass))
+				hasConstructor = true
+			case "compact_constructor_declaration":
+				// Compact constructors are handled in migrateRecordDeclaration, skip here
+			case "method_declaration":
+				function, isStatic := convertMethodDeclaration(ctx, child)
+				if isStatic {
+					result.Functions = append(result.Functions, function)
+				} else {
+					result.Methods = append(result.Methods, gosrc.Method{
+						Function: function,
+						Receiver: gosrc.Param{
+							Name: gosrc.SelfRef,
+							Ty:   gosrc.Type("*" + structName),
+						},
+					})
+				}
+			default:
+				UnhandledChild(ctx, child, "class_body")
 			}
-		case "constructor_declaration":
-			result.Functions = append(result.Functions, convertConstructor(ctx, &fieldInitValues, structName, child, isPublicClass))
-			hasConstructor = true
-		case "compact_constructor_declaration":
-			// Compact constructors are handled in migrateRecordDeclaration, skip here
-		case "method_declaration":
-			function, isStatic := convertMethodDeclaration(ctx, child)
-			if isStatic {
-				result.Functions = append(result.Functions, function)
-			} else {
-				result.Methods = append(result.Methods, gosrc.Method{
-					Function: function,
-					Receiver: gosrc.Param{
-						Name: gosrc.SelfRef,
-						Ty:   gosrc.Type("*" + structName),
-					},
-				})
-			}
-		// ignored
-		case "{":
-		case "}":
-		case "block_comment":
-		case "line_comment":
-		default:
-			UnhandledChild(ctx, child, "class_body")
+		})
+
+		if failed != nil {
+			// Add to source as failed migration
+			ctx.Source.FailedMigrations = append(ctx.Source.FailedMigrations, *failed)
 		}
 	})
 

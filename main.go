@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,8 +11,16 @@ import (
 )
 
 func main() {
+	// Parse command-line flags
+	strictMode := flag.Bool("Werror", false, "treat migration errors as fatal (exit on first error)")
+	flag.Parse()
+
 	config := java.LoadConfig()
-	args := os.Args[1:]
+	args := flag.Args()
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "Usage: javaGo [-Werror] <source.java> [dest.go]\n")
+		os.Exit(1)
+	}
 	sourcePath := args[0]
 	var destPath *string
 	if len(args) > 1 {
@@ -24,7 +33,7 @@ func main() {
 	defer tree.Close()
 
 	sourceFileName := filepath.Base(sourcePath)
-	ctx := java.NewMigrationContext(javaSource, sourceFileName)
+	ctx := java.NewMigrationContext(javaSource, sourceFileName, *strictMode)
 	java.MigrateTree(ctx, tree)
 	goSource := ctx.Source.ToSource(config)
 	if destPath != nil {
