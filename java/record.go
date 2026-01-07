@@ -1,11 +1,9 @@
 package java
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/heshanpadmasiri/javaGo/diagnostics"
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -44,15 +42,15 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 				case "formal_parameter":
 					typeNode := paramChild.ChildByFieldName("type")
 					if typeNode == nil {
-						diagnostics.Fatal(paramChild.ToSexp(), errors.New("formal_parameter missing type field"))
+						FatalError(ctx, paramChild, "formal_parameter missing type field", "formal_parameter")
 					}
 					nameNode := paramChild.ChildByFieldName("name")
 					if nameNode == nil {
-						diagnostics.Fatal(paramChild.ToSexp(), errors.New("formal_parameter missing name field"))
+						FatalError(ctx, paramChild, "formal_parameter missing name field", "formal_parameter")
 					}
 					ty, ok := TryParseType(ctx, typeNode)
 					if !ok {
-						diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse type in formal_parameter"))
+						FatalError(ctx, typeNode, "unable to parse type in formal_parameter", "formal_parameter")
 					}
 					// For record fields, we don't convert arrays to pointers (unlike function parameters)
 					// Record fields should be slices directly

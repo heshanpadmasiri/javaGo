@@ -139,11 +139,28 @@ func analyzeMethodDeclartions(ctx *MigrationContext, tree *tree_sitter.Tree) {
 		for _, capture := range match.Captures {
 			methodNode := &capture.Node
 
-			// Parse method signature
-			methodMetadata := parseMethodSignature(ctx, methodNode)
-			funcData := methodMetadata.toFunctionData()
+			// Parse method signature with error recovery
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// In strict mode, let panic propagate
+						if ctx.StrictMode {
+							panic(r)
+						}
+						// In non-strict mode, skip this method and continue
+						// We don't add it to the context, but log the error
+						if panicErr, ok := r.(MigrationPanic); ok {
+							fmt.Fprintf(os.Stderr, "Warning: Failed to analyze method signature: %s\n", panicErr.Message)
+						} else {
+							fmt.Fprintf(os.Stderr, "Warning: Failed to analyze method signature: %v\n", r)
+						}
+					}
+				}()
 
-			addMethodToCtx(ctx, funcData, methodMetadata, methodNode.Id())
+				methodMetadata := parseMethodSignature(ctx, methodNode)
+				funcData := methodMetadata.toFunctionData()
+				addMethodToCtx(ctx, funcData, methodMetadata, methodNode.Id())
+			}()
 		}
 	}
 }

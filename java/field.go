@@ -1,9 +1,6 @@
 package java
 
 import (
-	"errors"
-
-	"github.com/heshanpadmasiri/javaGo/diagnostics"
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -29,15 +26,15 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 		case "formal_parameter":
 			typeNode := child.ChildByFieldName("type")
 			if typeNode == nil {
-				diagnostics.Fatal(child.ToSexp(), errors.New("formal_parameter missing type field"))
+				FatalError(ctx, child, "formal_parameter missing type field", "formal_parameter")
 			}
 			nameNode := child.ChildByFieldName("name")
 			if nameNode == nil {
-				diagnostics.Fatal(child.ToSexp(), errors.New("formal_parameter missing name field"))
+				FatalError(ctx, child, "formal_parameter missing name field", "formal_parameter")
 			}
 			ty, ok := TryParseType(ctx, typeNode)
 			if !ok {
-				diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse type in formal_parameter"))
+				FatalError(ctx, typeNode, "unable to parse type in formal_parameter", "formal_parameter")
 			}
 			// Convert array types to pointer-to-array for parameters
 			if IsArrayOrSliceType(ty) {
@@ -55,7 +52,7 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 				case "variable_declarator":
 					nameNode := spreadChild.ChildByFieldName("name")
 					if nameNode == nil {
-						diagnostics.Fatal(spreadChild.ToSexp(), errors.New("spread child missing name field"))
+						FatalError(ctx, spreadChild, "spread child missing name field", "spread_parameter")
 					}
 					name = nameNode.Utf8Text(ctx.JavaSource)
 				case "...":
@@ -141,7 +138,7 @@ func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) vari
 	if nameNode != nil {
 		name = nameNode.Utf8Text(ctx.JavaSource)
 	} else {
-		diagnostics.Fatal(declNode.ToSexp(), errors.New("variable_declarator missing name field"))
+		FatalError(ctx, declNode, "variable_declarator missing name field", "variable_declarator")
 	}
 	valueNode := declNode.ChildByFieldName("value")
 	if valueNode != nil {

@@ -62,6 +62,24 @@ func UnhandledChild(ctx *MigrationContext, node *tree_sitter.Node, parentName st
 	})
 }
 
+// FatalError reports a fatal error and exits (in strict mode) or panics (in non-strict mode)
+// This is useful for errors during type parsing or other operations where graceful recovery is desired
+func FatalError(ctx *MigrationContext, node *tree_sitter.Node, msg string, parentName string) {
+	if ctx.StrictMode {
+		fmt.Fprintf(os.Stderr, "Fatal: %s: %s\n", node.ToSexp(), msg)
+		os.Exit(1)
+	}
+
+	// In non-strict mode, panic with structured error info
+	panic(MigrationPanic{
+		Message:    msg,
+		JavaSource: node.Utf8Text(ctx.JavaSource),
+		SExpr:      node.ToSexp(),
+		NodeKind:   node.Kind(),
+		ParentName: parentName,
+	})
+}
+
 // Assert checks a condition and exits with an error message if false
 func Assert(msg string, condition bool) {
 	if condition {

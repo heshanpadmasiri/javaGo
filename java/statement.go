@@ -1,10 +1,8 @@
 package java
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/heshanpadmasiri/javaGo/diagnostics"
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -179,7 +177,7 @@ func convertLocalVariableDeclaration(ctx *MigrationContext, stmtNode *tree_sitte
 	typeNode := stmtNode.ChildByFieldName("type")
 	ty, ok := TryParseType(ctx, typeNode)
 	if !ok {
-		diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse type in local_variable_declaration"))
+		FatalError(ctx, typeNode, "unable to parse type in local_variable_declaration", "local_variable_declaration")
 	}
 	declNode := stmtNode.ChildByFieldName("declarator")
 	name := declNode.ChildByFieldName("name").Utf8Text(ctx.JavaSource)
