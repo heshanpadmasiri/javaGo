@@ -1,11 +1,9 @@
 package java
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/heshanpadmasiri/javaGo/diagnostics"
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -44,15 +42,15 @@ func migrateRecordDeclaration(ctx *MigrationContext, recordNode *tree_sitter.Nod
 				case "formal_parameter":
 					typeNode := paramChild.ChildByFieldName("type")
 					if typeNode == nil {
-						diagnostics.Fatal(paramChild.ToSexp(), errors.New("formal_parameter missing type field"))
+						FatalError(ctx, paramChild, "formal_parameter missing type field", "formal_parameter")
 					}
 					nameNode := paramChild.ChildByFieldName("name")
 					if nameNode == nil {
-						diagnostics.Fatal(paramChild.ToSexp(), errors.New("formal_parameter missing name field"))
+						FatalError(ctx, paramChild, "formal_parameter missing name field", "formal_parameter")
 					}
 					ty, ok := TryParseType(ctx, typeNode)
 					if !ok {
-						diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse type in formal_parameter"))
+						FatalError(ctx, typeNode, "unable to parse type in formal_parameter", "formal_parameter")
 					}
 					// For record fields, we don't convert arrays to pointers (unlike function parameters)
 					// Record fields should be slices directly
@@ -362,24 +360,33 @@ func convertCompactConstructorBody(ctx *MigrationContext, recordComponents []gos
 	// - Explicit assignments to component fields (they're implicit)
 	// The body can contain validation/normalization logic that modifies parameters
 	IterateChildren(bodyNode, func(child *tree_sitter.Node) {
+		// Skip ignored tokens
 		switch child.Kind() {
-		// Handle all statement types by delegating to convertStatement
-		case "if_statement", "expression_statement", "local_variable_declaration",
-			"return_statement", "break_statement", "continue_statement",
-			"while_statement", "for_statement", "enhanced_for_statement",
-			"throw_statement", "try_statement", "assert_statement",
-			"switch_expression", "yield_statement":
-			statements := convertStatement(ctx, child)
-			if statements != nil {
-				body = append(body, statements...)
+		case "{", "}", "line_comment", "block_comment":
+			return
+		}
+
+		// Wrap statement migration in error recovery
+		failed := tryMigrateMember(ctx, fmt.Sprintf("compact_constructor %s.%s", structName, child.Kind()), child, func() {
+			switch child.Kind() {
+			// Handle all statement types by delegating to convertStatement
+			case "if_statement", "expression_statement", "local_variable_declaration",
+				"return_statement", "break_statement", "continue_statement",
+				"while_statement", "for_statement", "enhanced_for_statement",
+				"throw_statement", "try_statement", "assert_statement",
+				"switch_expression", "yield_statement":
+				statements := convertStatement(ctx, child)
+				if statements != nil {
+					body = append(body, statements...)
+				}
+			default:
+				UnhandledChild(ctx, child, "compact_constructor_body")
 			}
-		// ignored
-		case "{":
-		case "}":
-		case "line_comment":
-		case "block_comment":
-		default:
-			UnhandledChild(ctx, child, "compact_constructor_body")
+		})
+
+		if failed != nil {
+			// Add to source as failed migration
+			ctx.Source.FailedMigrations = append(ctx.Source.FailedMigrations, *failed)
 		}
 	})
 	return body

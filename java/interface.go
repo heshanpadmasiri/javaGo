@@ -1,6 +1,8 @@
 package java
 
 import (
+	"fmt"
+
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -35,38 +37,46 @@ func migrateInterfaceDeclaration(ctx *MigrationContext, interfaceNode *tree_sitt
 		case "interface_body":
 			// Parse methods in interface body
 			IterateChildren(child, func(bodyChild *tree_sitter.Node) {
+				// Skip ignored tokens
 				switch bodyChild.Kind() {
-				case "class_declaration":
-					migrateClassDeclaration(ctx, bodyChild)
-				case "record_declaration":
-					migrateRecordDeclaration(ctx, bodyChild)
-				case "enum_declaration":
-					migrateEnumDeclaration(ctx, bodyChild)
-				case "method_declaration":
-					isDefault := HasModifier(ctx, bodyChild, "default")
-					isStatic := HasModifier(ctx, bodyChild, "static")
+				case "{", "}", ";", "line_comment", "block_comment":
+					return
+				}
 
-					if isDefault {
-						// Default method - convert to standalone function with 'this' parameter
-						function := convertMethodDeclarationToFunction(ctx, bodyChild, true, interfaceName)
-						defaultMethods = append(defaultMethods, function)
-					} else if isStatic {
-						// Static method - convert to package-level function
-						function := convertMethodDeclarationToFunction(ctx, bodyChild, false, "")
-						staticMethods = append(staticMethods, function)
-					} else {
-						// Regular method - add to interface
-						method := extractInterfaceMethodSignature(ctx, bodyChild)
-						regularMethods = append(regularMethods, method)
+				// Wrap member migration in error recovery
+				failed := tryMigrateMember(ctx, fmt.Sprintf("interface %s.%s", interfaceName, bodyChild.Kind()), bodyChild, func() {
+					switch bodyChild.Kind() {
+					case "class_declaration":
+						migrateClassDeclaration(ctx, bodyChild)
+					case "record_declaration":
+						migrateRecordDeclaration(ctx, bodyChild)
+					case "enum_declaration":
+						migrateEnumDeclaration(ctx, bodyChild)
+					case "method_declaration":
+						isDefault := HasModifier(ctx, bodyChild, "default")
+						isStatic := HasModifier(ctx, bodyChild, "static")
+
+						if isDefault {
+							// Default method - convert to standalone function with 'this' parameter
+							function := convertMethodDeclarationToFunction(ctx, bodyChild, true, interfaceName)
+							defaultMethods = append(defaultMethods, function)
+						} else if isStatic {
+							// Static method - convert to package-level function
+							function := convertMethodDeclarationToFunction(ctx, bodyChild, false, "")
+							staticMethods = append(staticMethods, function)
+						} else {
+							// Regular method - add to interface
+							method := extractInterfaceMethodSignature(ctx, bodyChild)
+							regularMethods = append(regularMethods, method)
+						}
+					default:
+						UnhandledChild(ctx, bodyChild, "interface_body")
 					}
-				// ignored
-				case "{":
-				case "}":
-				case ";":
-				case "line_comment":
-				case "block_comment":
-				default:
-					UnhandledChild(ctx, bodyChild, "interface_body")
+				})
+
+				if failed != nil {
+					// Add to source as failed migration
+					ctx.Source.FailedMigrations = append(ctx.Source.FailedMigrations, *failed)
 				}
 			})
 		// ignored

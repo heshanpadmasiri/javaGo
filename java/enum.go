@@ -258,29 +258,41 @@ func convertSimpleEnum(ctx *MigrationContext, enumTypeName string, enumConstants
 		var findMethods func(node *tree_sitter.Node)
 		findMethods = func(node *tree_sitter.Node) {
 			IterateChildren(node, func(bodyChild *tree_sitter.Node) {
+				// Skip ignored tokens
 				switch bodyChild.Kind() {
-				case "method_declaration":
-					// Handle methods similar to class methods
-					function, isStatic := convertMethodDeclaration(ctx, bodyChild)
-					if isStatic {
-						ctx.Source.Functions = append(ctx.Source.Functions, function)
-					} else {
-						ctx.Source.Methods = append(ctx.Source.Methods, gosrc.Method{
-							Function: function,
-							Receiver: gosrc.Param{
-								Name: gosrc.SelfRef,
-								Ty:   gosrc.Type("*" + enumTypeName),
-							},
-						})
+				case "enum_constant", "{", "}", ";", ",", "line_comment", "block_comment", "field_declaration":
+					return
+				}
+
+				// Wrap member migration in error recovery
+				failed := tryMigrateMember(ctx, fmt.Sprintf("enum %s.%s", enumTypeName, bodyChild.Kind()), bodyChild, func() {
+					switch bodyChild.Kind() {
+					case "method_declaration":
+						// Handle methods similar to class methods
+						function, isStatic := convertMethodDeclaration(ctx, bodyChild)
+						if isStatic {
+							ctx.Source.Functions = append(ctx.Source.Functions, function)
+						} else {
+							ctx.Source.Methods = append(ctx.Source.Methods, gosrc.Method{
+								Function: function,
+								Receiver: gosrc.Param{
+									Name: gosrc.SelfRef,
+									Ty:   gosrc.Type("*" + enumTypeName),
+								},
+							})
+						}
+					case "enum_declaration":
+						// Handle nested enums
+						migrateEnumDeclaration(ctx, bodyChild)
+					default:
+						// Recursively search nested structures
+						findMethods(bodyChild)
 					}
-				case "enum_constant":
-					// Skip enum constants - already parsed
-				case "enum_declaration":
-					// Handle nested enums
-					migrateEnumDeclaration(ctx, bodyChild)
-				default:
-					// Recursively search nested structures
-					findMethods(bodyChild)
+				})
+
+				if failed != nil {
+					// Add to source as failed migration
+					ctx.Source.FailedMigrations = append(ctx.Source.FailedMigrations, *failed)
 				}
 			})
 		}
@@ -303,35 +315,44 @@ func convertComplexEnum(ctx *MigrationContext, enumTypeName string, enumConstant
 	var findFieldsAndMethods func(node *tree_sitter.Node)
 	findFieldsAndMethods = func(node *tree_sitter.Node) {
 		IterateChildren(node, func(child *tree_sitter.Node) {
+			// Skip ignored tokens
 			switch child.Kind() {
-			case "field_declaration":
-				field, _, _ := convertFieldDeclaration(ctx, child)
-				fields = append(fields, field)
-			case "method_declaration":
-				// Handle methods similar to class methods
-				function, isStatic := convertMethodDeclaration(ctx, child)
-				if isStatic {
-					ctx.Source.Functions = append(ctx.Source.Functions, function)
-				} else {
-					ctx.Source.Methods = append(ctx.Source.Methods, gosrc.Method{
-						Function: function,
-						Receiver: gosrc.Param{
-							Name: gosrc.SelfRef,
-							Ty:   gosrc.Type("*" + enumTypeName),
-						},
-					})
+			case "enum_constant", "{", "}", ";", ",", "line_comment", "block_comment", "constructor_declaration":
+				return
+			}
+
+			// Wrap member migration in error recovery
+			failed := tryMigrateMember(ctx, fmt.Sprintf("enum %s.%s", enumTypeName, child.Kind()), child, func() {
+				switch child.Kind() {
+				case "field_declaration":
+					field, _, _ := convertFieldDeclaration(ctx, child)
+					fields = append(fields, field)
+				case "method_declaration":
+					// Handle methods similar to class methods
+					function, isStatic := convertMethodDeclaration(ctx, child)
+					if isStatic {
+						ctx.Source.Functions = append(ctx.Source.Functions, function)
+					} else {
+						ctx.Source.Methods = append(ctx.Source.Methods, gosrc.Method{
+							Function: function,
+							Receiver: gosrc.Param{
+								Name: gosrc.SelfRef,
+								Ty:   gosrc.Type("*" + enumTypeName),
+							},
+						})
+					}
+				case "enum_declaration":
+					// Handle nested enums
+					migrateEnumDeclaration(ctx, child)
+				default:
+					// Recursively search nested structures
+					findFieldsAndMethods(child)
 				}
-			case "constructor_declaration":
-				// Enum constructors are private and used for initialization
-				// We'll handle them in the var declarations
-			case "enum_constant":
-				// Skip enum constants - already parsed
-			case "enum_declaration":
-				// Handle nested enums
-				migrateEnumDeclaration(ctx, child)
-			default:
-				// Recursively search nested structures
-				findFieldsAndMethods(child)
+			})
+
+			if failed != nil {
+				// Add to source as failed migration
+				ctx.Source.FailedMigrations = append(ctx.Source.FailedMigrations, *failed)
 			}
 		})
 	}

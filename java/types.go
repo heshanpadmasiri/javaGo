@@ -2,9 +2,9 @@ package java
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
-	"github.com/heshanpadmasiri/javaGo/diagnostics"
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -85,6 +85,12 @@ func HasModifier(ctx *MigrationContext, methodNode *tree_sitter.Node, modifier s
 		}
 	})
 	return hasModifier
+}
+
+// fatalTypeError handles a fatal type parsing error
+// In strict mode, it exits immediately. In non-strict mode, it panics so the error can be recovered
+func fatalTypeError(ctx *MigrationContext, node *tree_sitter.Node, err error) {
+	FatalError(ctx, node, fmt.Sprintf("%v", err), "type parsing")
 }
 
 // TryParseType attempts to parse a tree-sitter node into a Go type
@@ -180,7 +186,7 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 		typeNode := node.ChildByFieldName("element")
 		ty, ok := TryParseType(ctx, typeNode)
 		if !ok {
-			diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse element type in array_type"))
+			fatalTypeError(ctx, typeNode, errors.New("unable to parse element type in array_type"))
 		}
 		return gosrc.Type("[]" + ty), true
 	case "generic_type":
@@ -227,7 +233,7 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 			}
 			return gosrc.Type("map[" + typeParams[0] + "]" + typeParams[1]), true
 		default:
-			diagnostics.Fatal(node.ToSexp(), errors.New("unhandled generic type : "+typeName))
+			fatalTypeError(ctx, node, errors.New("unhandled generic type : "+typeName))
 		}
 	}
 

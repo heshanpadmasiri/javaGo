@@ -1,12 +1,10 @@
 package java
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
-	"github.com/heshanpadmasiri/javaGo/diagnostics"
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
@@ -25,7 +23,7 @@ func convertArgumentList(ctx *MigrationContext, argList *tree_sitter.Node) []gos
 		default:
 			exp, init := convertExpression(ctx, child)
 			if len(init) > 0 {
-				diagnostics.Fatal(child.ToSexp(), errors.New("unexpected statements in argument list expression"))
+				FatalError(ctx, child, "unexpected statements in argument list expression", "argument_list")
 			}
 			args = append(args, exp)
 		}
@@ -45,7 +43,7 @@ func convertArrayInitializer(ctx *MigrationContext, initNode *tree_sitter.Node) 
 			// Any other node is an element expression
 			exp, init := convertExpression(ctx, child)
 			if len(init) > 0 {
-				diagnostics.Fatal(child.ToSexp(), errors.New("unexpected statements in array initializer"))
+				FatalError(ctx, child, "unexpected statements in array initializer", "array_initializer")
 			}
 			elements = append(elements, exp)
 		}
@@ -103,7 +101,7 @@ func convertArrayCreationExpression(ctx *MigrationContext, expression *tree_sitt
 	typeNode := expression.ChildByFieldName("type")
 	ty, ok := TryParseType(ctx, typeNode)
 	if !ok {
-		diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse type in array_creation_expression"))
+		FatalError(ctx, typeNode, "unable to parse type in array_creation_expression", "array_creation_expression")
 	}
 
 	// Check for dimensions to make it an array type
@@ -219,7 +217,7 @@ func convertHashMapCreationExpression(ctx *MigrationContext, expression *tree_si
 func convertObjectCreationExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gosrc.Expression, []gosrc.Statement) {
 	ty, isType := TryParseType(ctx, expression.ChildByFieldName("type"))
 	if !isType {
-		diagnostics.Fatal(expression.ToSexp(), errors.New("unable to parse type in object_creation_expression"))
+		FatalError(ctx, expression.ChildByFieldName("type"), "unable to parse type in object_creation_expression", "object_creation_expression")
 	}
 	if ty.IsArray() {
 		return &gosrc.GoExpression{
@@ -315,7 +313,7 @@ func convertInstanceofExpression(ctx *MigrationContext, expression *tree_sitter.
 	typeNode := expression.ChildByFieldName("right")
 	ty, ok := TryParseType(ctx, typeNode)
 	if !ok {
-		diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse type in instanceof_expression"))
+		FatalError(ctx, typeNode, "unable to parse type in instanceof_expression", "instanceof_expression")
 	}
 	return &gosrc.GoExpression{
 		Source: fmt.Sprintf("%s.(%s)", valueExp.ToSource(), ty.ToSource()),
@@ -326,7 +324,7 @@ func convertCastExpression(ctx *MigrationContext, expression *tree_sitter.Node) 
 	typeNode := expression.ChildByFieldName("type")
 	ty, ok := TryParseType(ctx, typeNode)
 	if !ok {
-		diagnostics.Fatal(typeNode.ToSexp(), errors.New("unable to parse type in cast_expression"))
+		FatalError(ctx, typeNode, "unable to parse type in cast_expression", "cast_expression")
 	}
 	valueNode := expression.ChildByFieldName("value")
 	valueExp, initStmts := convertExpression(ctx, valueNode)
@@ -640,7 +638,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gos
 
 		n, err := strconv.ParseInt(text, 10, 64)
 		if err != nil {
-			diagnostics.Fatal(expression.ToSexp(), err)
+			FatalError(ctx, expression, fmt.Sprintf("failed to parse integer: %v", err), "integer_literal")
 		}
 
 		if isLong {
@@ -667,7 +665,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gos
 
 		n, err := strconv.ParseInt(text, 0, 64)
 		if err != nil {
-			diagnostics.Fatal(expression.ToSexp(), err)
+			FatalError(ctx, expression, fmt.Sprintf("failed to parse hex/octal integer: %v", err), "hex_integer_literal")
 		}
 
 		if isLong {
@@ -687,7 +685,7 @@ func convertExpression(ctx *MigrationContext, expression *tree_sitter.Node) (gos
 	default:
 		fmt.Println(expression.Utf8Text(ctx.JavaSource))
 		expression.Parent()
-		diagnostics.Fatal(expression.ToSexp(), errors.New("unhandled expression kind: "+expression.Kind()))
+		FatalError(ctx, expression, "unhandled expression kind: "+expression.Kind(), "expression")
 	}
 	panic("unreachable")
 }
