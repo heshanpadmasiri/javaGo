@@ -29,6 +29,7 @@ type MigrationContext struct {
 	ConstructorMetadataCache map[uintptr]constructorMetadata // Cache of parsed constructor signatures by node ID
 	StrictMode               bool                            // If true, treat migration errors as fatal
 	Errors                   []MigrationError                // Collected migration errors
+	TypeMappings             map[string]string
 }
 
 // MigrationError represents an error that occurred during migration
@@ -51,6 +52,10 @@ func (this FunctionData) sameArgs(other FunctionData) bool {
 
 // NewMigrationContext creates and initializes a new MigrationContext
 func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bool) *MigrationContext {
+	// TODO: get these from config file
+	typeMappings := make(map[string]string)
+	typeMappings["DiagnosticCode"] = "diagnostics.DiagnosticCode"
+	typeMappings["SyntaxKind"] = "diagnostics.DiagnosticCode"
 	return &MigrationContext{
 		JavaSource:               javaSource,
 		SourceFilePath:           sourceFilePath,
@@ -62,6 +67,7 @@ func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bo
 		ConstructorMetadataCache: make(map[uintptr]constructorMetadata),
 		StrictMode:               strictMode,
 		Errors:                   []MigrationError{},
+		TypeMappings:             typeMappings,
 	}
 }
 

@@ -122,26 +122,7 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 			goType = "internal." + typeName
 			return gosrc.Type(goType), true
 		}
-		// FIXME: extract this to a method
-		switch typeName {
-		case "Object":
-			goType = "interface{}"
-		case "String":
-			goType = "string"
-		case "Integer":
-			goType = "int"
-		case "Long":
-			goType = "int64"
-		case "Boolean":
-			goType = "bool"
-		// TODO: instead of hardcoding these make is possible to supply them using config
-		case "DiagnosticCode":
-			goType = "diagnostics.DiagnosticCode"
-		case "SyntaxKind":
-			goType = "common.SyntaxKind"
-		default:
-			goType = typeName
-		}
+		goType = toGoType(ctx, typeName)
 		return gosrc.Type(goType), true
 	case "type_identifier":
 		var goType string
@@ -157,24 +138,7 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 			goType = "internal." + typeName
 			return gosrc.Type(goType), true
 		}
-		switch typeName {
-		case "Object":
-			goType = "interface{}"
-		case "String":
-			goType = "string"
-		case "Integer":
-			goType = "int"
-		case "Long":
-			goType = "int64"
-		case "Boolean":
-			goType = "bool"
-		case "DiagnosticCode":
-			goType = "diagnostics.DiagnosticCode"
-		case "SyntaxKind":
-			goType = "common.SyntaxKind"
-		default:
-			goType = typeName
-		}
+		goType = toGoType(ctx, typeName)
 		return gosrc.Type(goType), true
 	case "integral_type":
 		return gosrc.TypeInt, true
@@ -206,24 +170,18 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 		})
 		switch typeName {
 		// Array types
-		case "ArrayDeque":
-			fallthrough
-		case "Deque":
-			fallthrough
-		case "Collection":
-			fallthrough
-		case "ArrayList":
-			fallthrough
-		case "List":
+		case "ArrayDeque",
+			"Deque",
+			"Collection",
+			"ArrayList",
+			"List":
 			Assert("List can have only one type param", len(typeParams) < 2)
 			if len(typeParams) == 0 {
 				return gosrc.Type("[]interface{}"), true
 			}
 			return gosrc.Type("[]" + typeParams[0]), true
 		// Map types
-		case "HashMap":
-			fallthrough
-		case "Map":
+		case "HashMap", "Map":
 			Assert("Map can have at most two type params", len(typeParams) < 3)
 			if len(typeParams) == 0 {
 				return gosrc.Type("map[interface{}]interface{}"), true
@@ -236,8 +194,28 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 			fatalTypeError(ctx, node, errors.New("unhandled generic type : "+typeName))
 		}
 	}
-
 	return "", false
+}
+
+func toGoType(ctx *MigrationContext, javaTy string) (goType string) {
+	if configTy, ok := ctx.TypeMappings[javaTy]; ok {
+		return configTy
+	}
+	switch javaTy {
+	case "Object":
+		goType = "interface{}"
+	case "String":
+		goType = "string"
+	case "Integer":
+		goType = "int"
+	case "Long":
+		goType = "int64"
+	case "Boolean":
+		goType = "bool"
+	default:
+		goType = javaTy
+	}
+	return goType
 }
 
 // IsArrayOrSliceType checks if a type is an array or slice
