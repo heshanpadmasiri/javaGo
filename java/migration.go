@@ -30,6 +30,7 @@ type MigrationContext struct {
 	StrictMode               bool                            // If true, treat migration errors as fatal
 	Errors                   []MigrationError                // Collected migration errors
 	TypeMappings             map[string]string
+	// TODO: have seperate channels for std out and std error
 }
 
 // MigrationError represents an error that occurred during migration
@@ -50,12 +51,12 @@ func (this FunctionData) sameArgs(other FunctionData) bool {
 	return slices.Equal(this.ArgumentTypes, other.ArgumentTypes)
 }
 
+// TODO: make it possibl to map the std out and std error from outside so we can control this for things like tests
 // NewMigrationContext creates and initializes a new MigrationContext
-func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bool) *MigrationContext {
-	// TODO: get these from config file
-	typeMappings := make(map[string]string)
-	typeMappings["DiagnosticCode"] = "diagnostics.DiagnosticCode"
-	typeMappings["SyntaxKind"] = "diagnostics.DiagnosticCode"
+func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bool, typeMappings map[string]string) *MigrationContext {
+	if typeMappings == nil {
+		typeMappings = make(map[string]string)
+	}
 	return &MigrationContext{
 		JavaSource:               javaSource,
 		SourceFilePath:           sourceFilePath,
@@ -71,6 +72,7 @@ func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bo
 	}
 }
 
+// TODO: this should be moved to the driver
 // LoadConfig loads migration configuration from Config.toml
 func LoadConfig() gosrc.Config {
 	config := gosrc.Config{
@@ -102,6 +104,9 @@ func LoadConfig() gosrc.Config {
 	}
 	if fileConfig.LicenseHeader != "" {
 		config.LicenseHeader = fileConfig.LicenseHeader
+	}
+	if fileConfig.TypeMappings != nil {
+		config.TypeMappings = fileConfig.TypeMappings
 	}
 
 	return config

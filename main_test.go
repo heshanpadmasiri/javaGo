@@ -77,7 +77,7 @@ func TestMigration(t *testing.T) {
 			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := java.NewMigrationContext(javaContent, entry.Name(), true) // Use strict mode in tests
+			ctx := java.NewMigrationContext(javaContent, entry.Name(), true, nil) // Use strict mode in tests
 			java.MigrateTree(ctx, tree)
 			config := gosrc.Config{
 				PackageName:   "converted",
@@ -210,7 +210,7 @@ license_header = """// Copyright 2024 Test Company
 			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := java.NewMigrationContext(javaContent, "test.java", true) // Use strict mode in tests
+			ctx := java.NewMigrationContext(javaContent, "test.java", true, nil) // Use strict mode in tests
 			java.MigrateTree(ctx, tree)
 
 			// Load config (should read from Config.toml in current directory)
@@ -280,7 +280,7 @@ public class Calculator {
 	tree := java.ParseJava(javaSource)
 	defer tree.Close()
 
-	ctx := java.NewMigrationContext(javaSource, "test.java", true) // Use strict mode in tests
+	ctx := java.NewMigrationContext(javaSource, "test.java", true, nil) // Use strict mode in tests
 
 	java.MigrateTree(ctx, tree)
 
@@ -413,7 +413,7 @@ public class Outer {
 	tree := java.ParseJava(javaSource)
 	defer tree.Close()
 
-	ctx := java.NewMigrationContext(javaSource, "test.java", true) // Use strict mode in tests
+	ctx := java.NewMigrationContext(javaSource, "test.java", true, nil) // Use strict mode in tests
 
 	java.MigrateTree(ctx, tree)
 

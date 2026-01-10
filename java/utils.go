@@ -272,6 +272,7 @@ func handleMigrationPanic(ctx *MigrationContext, location string, node *tree_sit
 
 	ctx.Errors = append(ctx.Errors, err)
 
+	// TODO: this should be controlled by the migration context using a channel
 	// Print to stderr immediately
 	fmt.Fprintf(os.Stderr, "Error migrating %s: %s\n", location, err.Message)
 

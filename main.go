@@ -33,7 +33,7 @@ func main() {
 	defer tree.Close()
 
 	sourceFileName := filepath.Base(sourcePath)
-	ctx := java.NewMigrationContext(javaSource, sourceFileName, *strictMode)
+	ctx := java.NewMigrationContext(javaSource, sourceFileName, *strictMode, config.TypeMappings)
 	java.MigrateTree(ctx, tree)
 	goSource := ctx.Source.ToSource(config)
 	if destPath != nil {

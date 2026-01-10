@@ -319,10 +319,12 @@ const (
 // NIL is a predefined nil expression
 var NIL = VarRef{Ref: "nil"}
 
+// TODO: move this to the driver as well
 // Config represents migration configuration
 type Config struct {
-	PackageName   string `toml:"package_name"`
-	LicenseHeader string `toml:"license_header"`
+	PackageName   string            `toml:"package_name"`
+	LicenseHeader string            `toml:"license_header"`
+	TypeMappings  map[string]string `toml:"type_mappings"`
 }
 
 // ToSource methods for all types
@@ -383,13 +385,13 @@ func (s *GoSource) ToSource(config Config) string {
 		sb.WriteString(fmt.Sprintf("// Error: %s\n", failed.ErrorMessage))
 		if failed.JavaSource != "" {
 			sb.WriteString("// Java source:\n")
-			for _, line := range strings.Split(failed.JavaSource, "\n") {
+			for line := range strings.SplitSeq(failed.JavaSource, "\n") {
 				sb.WriteString("// " + line + "\n")
 			}
 		}
 		if failed.SExpr != "" {
 			sb.WriteString("// S-expression:\n")
-			for _, line := range strings.Split(failed.SExpr, "\n") {
+			for line := range strings.SplitSeq(failed.SExpr, "\n") {
 				sb.WriteString("// " + line + "\n")
 			}
 		}
