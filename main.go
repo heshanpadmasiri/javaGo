@@ -15,7 +15,7 @@ func main() {
 	strictMode := flag.Bool("Werror", false, "treat migration errors as fatal (exit on first error)")
 	flag.Parse()
 
-	config := java.LoadConfig()
+	config := loadConfig()
 	args := flag.Args()
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "Usage: javaGo [-Werror] <source.java> [dest.go]\n")
@@ -35,7 +35,7 @@ func main() {
 	sourceFileName := filepath.Base(sourcePath)
 	ctx := java.NewMigrationContext(javaSource, sourceFileName, *strictMode, config.TypeMappings)
 	java.MigrateTree(ctx, tree)
-	goSource := ctx.Source.ToSource(config)
+	goSource := ctx.Source.ToSource(config.LicenseHeader, config.PackageName)
 	if destPath != nil {
 		// TODO: use a proper mode
 		err = os.WriteFile(*destPath, []byte(goSource), 0o644)

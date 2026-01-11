@@ -319,27 +319,19 @@ const (
 // NIL is a predefined nil expression
 var NIL = VarRef{Ref: "nil"}
 
-// TODO: move this to the driver as well
-// Config represents migration configuration
-type Config struct {
-	PackageName   string            `toml:"package_name"`
-	LicenseHeader string            `toml:"license_header"`
-	TypeMappings  map[string]string `toml:"type_mappings"`
-}
-
 // ToSource methods for all types
 
-func (s *GoSource) ToSource(config Config) string {
+func (s *GoSource) ToSource(licenseHeader, packageName string) string {
 	sb := strings.Builder{}
-	if config.LicenseHeader != "" {
-		sb.WriteString(config.LicenseHeader)
-		if !strings.HasSuffix(config.LicenseHeader, "\n") {
+	if licenseHeader != "" {
+		sb.WriteString(licenseHeader)
+		if !strings.HasSuffix(licenseHeader, "\n") {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
 	}
 	sb.WriteString("package ")
-	sb.WriteString(config.PackageName)
+	sb.WriteString(packageName)
 	sb.WriteString("\n\n")
 	if len(s.Imports) > 0 {
 		sb.WriteString("import (\n")
