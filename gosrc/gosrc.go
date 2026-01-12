@@ -319,25 +319,19 @@ const (
 // NIL is a predefined nil expression
 var NIL = VarRef{Ref: "nil"}
 
-// Config represents migration configuration
-type Config struct {
-	PackageName   string `toml:"package_name"`
-	LicenseHeader string `toml:"license_header"`
-}
-
 // ToSource methods for all types
 
-func (s *GoSource) ToSource(config Config) string {
+func (s *GoSource) ToSource(licenseHeader, packageName string) string {
 	sb := strings.Builder{}
-	if config.LicenseHeader != "" {
-		sb.WriteString(config.LicenseHeader)
-		if !strings.HasSuffix(config.LicenseHeader, "\n") {
+	if licenseHeader != "" {
+		sb.WriteString(licenseHeader)
+		if !strings.HasSuffix(licenseHeader, "\n") {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
 	}
 	sb.WriteString("package ")
-	sb.WriteString(config.PackageName)
+	sb.WriteString(packageName)
 	sb.WriteString("\n\n")
 	if len(s.Imports) > 0 {
 		sb.WriteString("import (\n")
@@ -383,13 +377,13 @@ func (s *GoSource) ToSource(config Config) string {
 		sb.WriteString(fmt.Sprintf("// Error: %s\n", failed.ErrorMessage))
 		if failed.JavaSource != "" {
 			sb.WriteString("// Java source:\n")
-			for _, line := range strings.Split(failed.JavaSource, "\n") {
+			for line := range strings.SplitSeq(failed.JavaSource, "\n") {
 				sb.WriteString("// " + line + "\n")
 			}
 		}
 		if failed.SExpr != "" {
 			sb.WriteString("// S-expression:\n")
-			for _, line := range strings.Split(failed.SExpr, "\n") {
+			for line := range strings.SplitSeq(failed.SExpr, "\n") {
 				sb.WriteString("// " + line + "\n")
 			}
 		}

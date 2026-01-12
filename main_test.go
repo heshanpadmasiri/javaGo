@@ -77,13 +77,13 @@ func TestMigration(t *testing.T) {
 			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := java.NewMigrationContext(javaContent, entry.Name(), true) // Use strict mode in tests
+			ctx := java.NewMigrationContext(javaContent, entry.Name(), true, nil) // Use strict mode in tests
 			java.MigrateTree(ctx, tree)
-			config := gosrc.Config{
+			config := config{
 				PackageName:   "converted",
 				LicenseHeader: "",
 			}
-			result := ctx.Source.ToSource(config)
+			result := ctx.Source.ToSource(config.LicenseHeader, config.PackageName)
 
 			// Format output with go fmt
 			formatted, err := formatGoCode(result)
@@ -210,11 +210,11 @@ license_header = """// Copyright 2024 Test Company
 			tree := java.ParseJava(javaContent)
 			defer tree.Close()
 
-			ctx := java.NewMigrationContext(javaContent, "test.java", true) // Use strict mode in tests
+			ctx := java.NewMigrationContext(javaContent, "test.java", true, nil) // Use strict mode in tests
 			java.MigrateTree(ctx, tree)
 
 			// Load config (should read from Config.toml in current directory)
-			config := java.LoadConfig()
+			config := loadConfig()
 
 			// Verify config was loaded correctly
 			if config.PackageName != tt.expectedPkg {
@@ -225,7 +225,7 @@ license_header = """// Copyright 2024 Test Company
 			}
 
 			// Generate Go source with config
-			result := ctx.Source.ToSource(config)
+			result := ctx.Source.ToSource(config.LicenseHeader, config.PackageName)
 
 			// Verify the output contains the expected package name
 			expectedPkgLine := "package " + tt.expectedPkg
@@ -280,7 +280,7 @@ public class Calculator {
 	tree := java.ParseJava(javaSource)
 	defer tree.Close()
 
-	ctx := java.NewMigrationContext(javaSource, "test.java", true) // Use strict mode in tests
+	ctx := java.NewMigrationContext(javaSource, "test.java", true, nil) // Use strict mode in tests
 
 	java.MigrateTree(ctx, tree)
 
@@ -413,7 +413,7 @@ public class Outer {
 	tree := java.ParseJava(javaSource)
 	defer tree.Close()
 
-	ctx := java.NewMigrationContext(javaSource, "test.java", true) // Use strict mode in tests
+	ctx := java.NewMigrationContext(javaSource, "test.java", true, nil) // Use strict mode in tests
 
 	java.MigrateTree(ctx, tree)
 

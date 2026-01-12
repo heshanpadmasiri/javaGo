@@ -33,7 +33,7 @@ class TestAnnotation {
 		tree := java.ParseJava(javaSource)
 		defer tree.Close()
 
-		ctx := java.NewMigrationContext(javaSource, "test.java", false) // non-strict mode
+		ctx := java.NewMigrationContext(javaSource, "test.java", false, nil) // non-strict mode
 		java.MigrateTree(ctx, tree)
 
 		// Check that we collected an error

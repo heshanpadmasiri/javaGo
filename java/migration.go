@@ -3,12 +3,10 @@ package java
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 
 	"github.com/heshanpadmasiri/javaGo/gosrc"
 
-	"github.com/pelletier/go-toml/v2"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
 )
@@ -29,6 +27,8 @@ type MigrationContext struct {
 	ConstructorMetadataCache map[uintptr]constructorMetadata // Cache of parsed constructor signatures by node ID
 	StrictMode               bool                            // If true, treat migration errors as fatal
 	Errors                   []MigrationError                // Collected migration errors
+	TypeMappings             map[string]string
+	// TODO: have seperate channels for std out and std error
 }
 
 // MigrationError represents an error that occurred during migration
@@ -49,8 +49,12 @@ func (this FunctionData) sameArgs(other FunctionData) bool {
 	return slices.Equal(this.ArgumentTypes, other.ArgumentTypes)
 }
 
+// TODO: make it possibl to map the std out and std error from outside so we can control this for things like tests
 // NewMigrationContext creates and initializes a new MigrationContext
-func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bool) *MigrationContext {
+func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bool, typeMappings map[string]string) *MigrationContext {
+	if typeMappings == nil {
+		typeMappings = make(map[string]string)
+	}
 	return &MigrationContext{
 		JavaSource:               javaSource,
 		SourceFilePath:           sourceFilePath,
@@ -62,43 +66,8 @@ func NewMigrationContext(javaSource []byte, sourceFilePath string, strictMode bo
 		ConstructorMetadataCache: make(map[uintptr]constructorMetadata),
 		StrictMode:               strictMode,
 		Errors:                   []MigrationError{},
+		TypeMappings:             typeMappings,
 	}
-}
-
-// LoadConfig loads migration configuration from Config.toml
-func LoadConfig() gosrc.Config {
-	config := gosrc.Config{
-		PackageName:   gosrc.PackageName,
-		LicenseHeader: "",
-	}
-
-	wd, err := os.Getwd()
-	if err != nil {
-		return config
-	}
-
-	configPath := filepath.Join(wd, "Config.toml")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		// Config file doesn't exist, return defaults
-		return config
-	}
-
-	var fileConfig gosrc.Config
-	if err := toml.Unmarshal(data, &fileConfig); err != nil {
-		// Invalid TOML, return defaults
-		return config
-	}
-
-	// Use values from file if provided, otherwise keep defaults
-	if fileConfig.PackageName != "" {
-		config.PackageName = fileConfig.PackageName
-	}
-	if fileConfig.LicenseHeader != "" {
-		config.LicenseHeader = fileConfig.LicenseHeader
-	}
-
-	return config
 }
 
 // MigrateTree migrates a Java tree-sitter tree to Go source

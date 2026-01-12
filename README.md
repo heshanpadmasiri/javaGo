@@ -1,5 +1,77 @@
 # javaGo
 
+## Configuration
+
+The migration tool can be configured using a `Config.toml` file in the current working directory.
+
+### Config.toml Format
+
+```toml
+# Package name for generated Go code (optional, defaults to "main")
+package_name = "mypackage"
+
+# License header to prepend to generated files (optional)
+license_header = """
+// Copyright 2024 MyCompany
+// Licensed under MIT
+"""
+
+# Type mappings from Java types to Go types (optional)
+# Format: JavaTypeName = "go.package.path.GoTypeName"
+[type_mappings]
+DiagnosticCode = "diagnostics.DiagnosticCode"
+SyntaxKind = "diagnostics.DiagnosticCode"
+MyCustomType = "mypkg.CustomGoType"
+```
+
+### Type Mappings
+
+Type mappings allow you to specify how custom Java types should be converted to Go types. This is useful when:
+
+- You have Java types that should map to specific Go packages
+- You want to use existing Go types instead of generating new ones
+- You need to maintain compatibility with existing Go code
+
+The type mapping takes precedence over the built-in type conversion rules. For example, if you define:
+
+```toml
+[type_mappings]
+String = "mystring.CustomString"
+```
+
+Then all Java `String` types will be converted to `mystring.CustomString` instead of the built-in Go `string` type.
+
+### Example Usage
+
+Given a Java file:
+
+```java
+public class Diagnostic {
+    private DiagnosticCode code;
+    private String message;
+}
+```
+
+With a `Config.toml`:
+
+```toml
+package_name = "diagnostics"
+
+[type_mappings]
+DiagnosticCode = "codes.DiagnosticCode"
+```
+
+The migration tool will generate:
+
+```go
+package diagnostics
+
+type Diagnostic struct {
+    code codes.DiagnosticCode
+    message string
+}
+```
+
 ## Migration strategy
 
 ### Abstract classes
