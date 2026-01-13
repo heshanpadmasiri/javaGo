@@ -365,6 +365,89 @@ public class Calculator {
 	}
 }
 
+func TestGenericTypeMappings(t *testing.T) {
+	// Create a temporary directory for the test
+	tmpDir, err := os.MkdirTemp("", "javago-generic-type-mappings-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Save original working directory
+	originalWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+	defer os.Chdir(originalWd)
+
+	// Change to temporary directory
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+
+	// Create Config.toml with type mappings
+	configContent := `[type_mappings]
+Optional = "option.Option"
+Result = "result.Result"
+CustomType = "MappedType"
+Either = "either.Either"
+`
+	configPath := filepath.Join(tmpDir, "Config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
+		t.Fatalf("Failed to write Config.toml: %v", err)
+	}
+
+	// Java source with generic types that should be mapped
+	javaSource := []byte(`
+class Test {
+    Optional<CustomType> field1;
+    Result<String> field2;
+    Either<CustomType, Integer> field3;
+    List<Optional<CustomType>> field4;
+}
+`)
+
+	// Parse and migrate
+	tree := java.ParseJava(javaSource)
+	defer tree.Close()
+
+	// Load config
+	config := loadConfig()
+
+	ctx := java.NewMigrationContext(javaSource, "test.java", true, config.TypeMappings)
+	java.MigrateTree(ctx, tree)
+
+	result := ctx.Source.ToSource(config.LicenseHeader, config.PackageName)
+
+	// Verify type mappings were applied
+	expectedMappings := []string{
+		"field1 option.Option[MappedType]",
+		"field2 result.Result[string]",
+		"field3 either.Either[MappedType,int]", // No space after comma before gofmt
+		"field4 []option.Option[MappedType]",
+	}
+
+	for _, expected := range expectedMappings {
+		if !strings.Contains(result, expected) {
+			t.Errorf("Expected output to contain '%s', got:\n%s", expected, result)
+		}
+	}
+
+	// Verify type mappings were applied (check that unmapped names don't appear)
+	if strings.Contains(result, "field1 Optional[") {
+		t.Errorf("Type mapping not applied for Optional in field1")
+	}
+	if strings.Contains(result, "field2 Result[") {
+		t.Errorf("Type mapping not applied for Result in field2")
+	}
+	if strings.Contains(result, "field3 Either[") {
+		t.Errorf("Type mapping not applied for Either in field3")
+	}
+	if strings.Contains(result, "field4 []Optional[") {
+		t.Errorf("Type mapping not applied for Optional in field4")
+	}
+}
+
 func TestMethodTrackingInNestedClasses(t *testing.T) {
 	javaSource := []byte(`
 public class Outer {

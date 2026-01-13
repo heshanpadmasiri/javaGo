@@ -93,6 +93,38 @@ func fatalTypeError(ctx *MigrationContext, node *tree_sitter.Node, err error) {
 	FatalError(ctx, node, fmt.Sprintf("%v", err), "type parsing")
 }
 
+// parseTypeArguments recursively parses type arguments from a type_arguments node.
+// It handles:
+// - Nested generics (e.g., Map<String, List<Integer>>)
+// - Wildcards (? -> any)
+// - Type mappings (applied recursively through TryParseType)
+//
+// Returns a slice of parsed Go types.
+func parseTypeArguments(ctx *MigrationContext, typeArgsNode *tree_sitter.Node) []gosrc.Type {
+	var typeParams []gosrc.Type
+
+	IterateChildren(typeArgsNode, func(child *tree_sitter.Node) {
+		var parsedType gosrc.Type
+		var ok bool
+
+		switch child.Kind() {
+		case "wildcard":
+			// Convert Java wildcards (?, ? extends T, ? super T) to Go 'any'
+			parsedType = gosrc.Type("any")
+			ok = true
+		default:
+			// Recursively parse any type node (handles nested generics)
+			parsedType, ok = TryParseType(ctx, child)
+		}
+
+		if ok {
+			typeParams = append(typeParams, parsedType)
+		}
+	})
+
+	return typeParams
+}
+
 // TryParseType attempts to parse a tree-sitter node into a Go type
 func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bool) {
 	switch node.Kind() {
@@ -153,34 +185,44 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 			fatalTypeError(ctx, typeNode, errors.New("unable to parse element type in array_type"))
 		}
 		return gosrc.Type("[]" + ty), true
+	case "wildcard":
+		// Java wildcards (?, ? extends Foo, ? super Bar) -> Go 'any'
+		return gosrc.Type("any"), true
 	case "generic_type":
+		// Generic types are converted as follows:
+		// 1. Known collection types (List, Map, etc.) -> Go slices/maps
+		// 2. Unknown types -> Go generic syntax: BaseType[T1,T2,...]
+		// 3. Type mappings from config are applied to both base type and parameters
+		// 4. Wildcards are converted to 'any'
+
+		// Step 1: Extract base type name and type arguments node
 		var typeName string
-		var typeParams []string
+		var typeArgsNode *tree_sitter.Node
+
 		IterateChildren(node, func(child *tree_sitter.Node) {
 			switch child.Kind() {
 			case "type_identifier":
 				typeName = child.Utf8Text(ctx.JavaSource)
 			case "type_arguments":
-				IterateChildren(child, func(typeArg *tree_sitter.Node) {
-					if typeArg.Kind() == "type_identifier" {
-						typeParams = append(typeParams, typeArg.Utf8Text(ctx.JavaSource))
-					}
-				})
+				typeArgsNode = child
 			}
 		})
+
+		// Step 2: Parse type arguments recursively (handles nested generics)
+		var typeParams []gosrc.Type
+		if typeArgsNode != nil {
+			typeParams = parseTypeArguments(ctx, typeArgsNode)
+		}
+
+		// Step 3: Special conversions for known collection types (backward compatibility)
 		switch typeName {
-		// Array types
-		case "ArrayDeque",
-			"Deque",
-			"Collection",
-			"ArrayList",
-			"List":
+		case "ArrayDeque", "Deque", "Collection", "ArrayList", "List":
 			Assert("List can have only one type param", len(typeParams) < 2)
 			if len(typeParams) == 0 {
 				return gosrc.Type("[]interface{}"), true
 			}
 			return gosrc.Type("[]" + typeParams[0]), true
-		// Map types
+
 		case "HashMap", "Map":
 			Assert("Map can have at most two type params", len(typeParams) < 3)
 			if len(typeParams) == 0 {
@@ -190,9 +232,27 @@ func TryParseType(ctx *MigrationContext, node *tree_sitter.Node) (gosrc.Type, bo
 				return gosrc.Type("map[" + typeParams[0] + "]interface{}"), true
 			}
 			return gosrc.Type("map[" + typeParams[0] + "]" + typeParams[1]), true
-		default:
-			fatalTypeError(ctx, node, errors.New("unhandled generic type : "+typeName))
 		}
+
+		// Step 4: Default case - apply type mapping and build generic syntax
+		baseType := toGoType(ctx, typeName)
+
+		if len(typeParams) == 0 {
+			// Raw generic without type parameters (e.g., Optional without <T>)
+			return gosrc.Type(baseType), true
+		}
+
+		// Build Go generic syntax: BaseType[T1,T2,...] (no spaces)
+		result := baseType + "["
+		for i, param := range typeParams {
+			if i > 0 {
+				result += ","
+			}
+			result += string(param)
+		}
+		result += "]"
+
+		return gosrc.Type(result), true
 	}
 	return "", false
 }
