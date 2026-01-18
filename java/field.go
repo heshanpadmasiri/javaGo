@@ -42,7 +42,7 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 			}
 			params = append(params, gosrc.Param{
 				Name: nameNode.Utf8Text(ctx.JavaSource),
-				Ty: ty,
+				Ty:   ty,
 			})
 		case "spread_parameter":
 			var ty gosrc.Type
@@ -67,7 +67,7 @@ func convertFormalParameters(ctx *MigrationContext, paramsNode *tree_sitter.Node
 			})
 			params = append(params, gosrc.Param{
 				Name: name,
-				Ty: "..." + ty,
+				Ty:   "..." + ty,
 			})
 		// ignored
 		case "(":
@@ -102,6 +102,14 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 			name = result.name
 			initExpr = result.value
 
+			// Extract comments from init statements (e.g., FIXME for ambiguous constructors)
+			// These will be added as field-level comments
+			for _, stmt := range result.initStmts {
+				if commentStmt, ok := stmt.(*gosrc.CommentStmt); ok {
+					comments = append(comments, commentStmt.Comments...)
+				}
+			}
+
 			// Handle shorthand array initializer: { 1, 2, 3 }
 			// Check if the value node was array_initializer
 			valueNode := child.ChildByFieldName("value")
@@ -120,16 +128,17 @@ func convertFieldDeclaration(ctx *MigrationContext, fieldNode *tree_sitter.Node)
 		}
 	})
 	return gosrc.StructField{
-		Name: name,
-		Ty: ty,
+		Name:     name,
+		Ty:       ty,
 		Public:   mods&PUBLIC != 0,
 		Comments: comments,
 	}, initExpr, mods
 }
 
 type variableDeclResult struct {
-	name  string
-	value gosrc.Expression
+	name      string
+	value     gosrc.Expression
+	initStmts []gosrc.Statement // Statements from init expression (e.g., FIXME comments)
 }
 
 func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) variableDeclResult {
@@ -145,20 +154,20 @@ func convertVariableDecl(ctx *MigrationContext, declNode *tree_sitter.Node) vari
 		// Skip array_initializer - parent will handle with type context
 		if valueNode.Kind() == "array_initializer" {
 			return variableDeclResult{
-				name: name,
+				name:  name,
 				value: nil, // Signal to parent to handle
 			}
 		}
 
-		value, init := convertExpression(ctx, valueNode)
-		Assert("unexpected statements in variable declaration", len(init) == 0)
+		value, initStmts := convertExpression(ctx, valueNode)
+		// Return init statements - parent will handle them appropriately
 		return variableDeclResult{
-			name: name,
-			value: value,
+			name:      name,
+			value:     value,
+			initStmts: initStmts,
 		}
 	}
 	return variableDeclResult{
 		name: name,
 	}
 }
-

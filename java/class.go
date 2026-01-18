@@ -559,9 +559,10 @@ func convertClassBody(ctx *MigrationContext, structName string, classBody *tree_
 				// If field is static final, add as module-level var
 				if mods&STATIC != 0 {
 					ctx.Source.Vars = append(ctx.Source.Vars, gosrc.ModuleVar{
-						Name:  field.Name,
-						Ty:    field.Ty,
-						Value: initExpr,
+						Name:     field.Name,
+						Ty:       field.Ty,
+						Value:    initExpr,
+						Comments: field.Comments,
 					})
 				} else {
 					// Regular field

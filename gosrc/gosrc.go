@@ -124,9 +124,10 @@ type (
 
 	// ModuleVar represents a module-level variable
 	ModuleVar struct {
-		Name  string
-		Ty    Type
-		Value Expression
+		Name     string
+		Ty       Type
+		Value    Expression
+		Comments []string
 	}
 
 	// FailedMigration represents a migration that failed
@@ -548,15 +549,20 @@ func (cb *ConstBlock) ToSource() string {
 }
 
 func (v *ModuleVar) ToSource() string {
+	sb := strings.Builder{}
+	AddComments(&sb, v.Comments)
 	if v.Value != nil {
 		// If name is "_" and both type and value are present, include type annotation (needed for type assertions)
 		// Otherwise, use type inference (existing behavior for regular vars)
 		if v.Name == "_" && v.Ty != "" {
-			return fmt.Sprintf("var %s %s = %s", v.Name, v.Ty.ToSource(), v.Value.ToSource())
+			sb.WriteString(fmt.Sprintf("var %s %s = %s", v.Name, v.Ty.ToSource(), v.Value.ToSource()))
+		} else {
+			sb.WriteString(fmt.Sprintf("var %s = %s", v.Name, v.Value.ToSource()))
 		}
-		return fmt.Sprintf("var %s = %s", v.Name, v.Value.ToSource())
+	} else {
+		sb.WriteString(fmt.Sprintf("var %s %s", v.Name, v.Ty.ToSource()))
 	}
-	return fmt.Sprintf("var %s %s", v.Name, v.Ty.ToSource())
+	return sb.String()
 }
 
 func (t *Type) ToSource() string {

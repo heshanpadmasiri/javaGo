@@ -258,18 +258,18 @@ public class Calculator {
     public int add(int a, int b) {
         return a + b;
     }
-    
+
     public int add(int a, int b, int c) {
         return a + b + c;
     }
-    
+
     public String concat(String s1, String s2) {
         return s1 + s2;
     }
-    
+
     private void helper() {
     }
-    
+
     public static int multiply(int x, int y) {
         return x * y;
     }
@@ -453,37 +453,37 @@ func TestMethodTrackingInNestedClasses(t *testing.T) {
 public class Outer {
     public void outerMethod() {
     }
-    
+
     public int process(String input) {
         return 0;
     }
-    
+
     public static class NestedStatic {
         public void nestedMethod() {
         }
-        
+
         public String convert(int value) {
             return "";
         }
-        
+
         public String convert(int value, boolean flag) {
             return "";
         }
     }
-    
+
     public class NestedInner {
         public void innerMethod(int x, int y) {
         }
     }
-    
+
     public enum Status {
         ACTIVE, INACTIVE;
-        
+
         public boolean isActive() {
             return this == ACTIVE;
         }
     }
-    
+
     public record Data(int value) {
         public int doubled() {
             return value * 2;
