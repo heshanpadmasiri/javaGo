@@ -11,7 +11,7 @@
             "mode": "auto",
             "program": "${workspaceFolder}",
             "args": [
-                "../ballerina-lang/compiler/ballerina-parser/src/main/java/io/ballerina/compiler/internal/parser/BallerinaParser.java"
+                "/Users/heshanp/Projects/ballerina-native-wibe/ballerina-lang/compiler/ballerina-lang/src/main/java/org/wso2/ballerinalang/compiler/parser/BLangNodeBuilder.java"
             ]
         }
     ]

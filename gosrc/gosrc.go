@@ -734,7 +734,7 @@ func (s *VarDeclaration) ToSource() string {
 }
 
 func (s *AssignStatement) ToSource() string {
-	return fmt.Sprintf("%s = %s", s.Ref.ToSource(), s.Value.ToSource())
+	return fmt.Sprintf("%s = %s", toSource(&s.Ref), toSource(s.Value))
 }
 
 func (s *CallStatement) ToSource() string {
@@ -939,4 +939,11 @@ func AddComments(sb *strings.Builder, comments []string) {
 		sb.WriteString(comment)
 		sb.WriteString("\n")
 	}
+}
+
+func toSource(elem SourceElement) string {
+	if elem == nil {
+		return "<NIL>"
+	}
+	return elem.ToSource()
 }
